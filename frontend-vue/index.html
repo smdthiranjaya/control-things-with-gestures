@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gesture Control Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.2.36/dist/vue.global.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.5.0/dist/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+</head>
+<body class="bg-gray-50">
+  <div id="app" class="min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+      <!-- Header -->
+      <header class="mb-8">
+        <h1 class="text-3xl font-bold text-indigo-600">Gesture Control Dashboard</h1>
+        <p class="text-gray-600">Control smart devices with hand gestures through computer vision</p>
+      </header>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Main Content - Camera Feed -->
+        <div class="lg:col-span-2">
+          <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-semibold mb-4">Camera Feed</h2>
+            <div class="relative">
+              <div v-if="loading" class="bg-gray-900 rounded-lg h-96 flex items-center justify-center">
+                <div class="text-center">
+                  <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500 mx-auto mb-4"></div>
+                  <p class="text-white">Loading camera feed...</p>
+                </div>
+              </div>
+              <div v-else-if="!settings.camera_source" class="bg-gray-900 rounded-lg h-96 flex items-center justify-center">
+                <div class="text-center">
+                  <span class="material-icons text-5xl text-white mb-2">videocam_off</span>
+                  <p class="text-white">No camera source selected</p>
+                </div>
+              </div>
+              <div v-else class="rounded-lg overflow-hidden">
+                <img :src="videoFeedUrl" alt="Camera Feed" class="w-full h-auto max-h-[600px] object-contain">
+                <div class="absolute bottom-4 left-4 bg-black bg-opacity-50 text-white px-3 py-1 rounded">
+                  {{ settings.gesture_detection_enabled ? 'Gesture Detection: ON' : 'Gesture Detection: OFF' }}
+                </div>
+                <div class="absolute top-4 right-4 bg-black bg-opacity-50 text-white px-3 py-1 rounded">
+                  Source: {{ settings.camera_source }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Settings Section -->
+          <div class="bg-white rounded-lg shadow-md p-6 mt-6">
+            <h2 class="text-xl font-semibold mb-4">Settings</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+              <!-- Camera Settings -->
+              <div class="border-b md:border-b-0 md:border-r border-gray-200 pb-4 md:pb-0 md:pr-4">
+                <h3 class="text-lg font-medium mb-3">Camera Settings</h3>
+                
+                <div class="mb-4">
+                  <label class="block text-gray-700 mb-2">Camera Source</label>
+                  <select v-model="settings.camera_source" @change="updateSettings" 
+                    class="w-full border border-gray-300 rounded px-3 py-2">
+                    <option v-for="(value, key) in cameras" :key="key" :value="key">{{ key }}</option>
+                  </select>
+                </div>
+                
+                <div class="mb-3 flex items-center">
+                  <input type="checkbox" id="gesture-detection" v-model="settings.gesture_detection_enabled" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="gesture-detection" class="text-gray-700">Enable Gesture Detection</label>
+                </div>
+                
+                <div class="flex items-center">
+                  <input type="checkbox" id="show-landmarks" v-model="settings.show_landmarks" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="show-landmarks" class="text-gray-700">Show Hand Landmarks</label>
+                </div>
+              </div>
+              
+              <!-- Motor Control Settings -->
+              <div class="border-b md:border-b-0 md:border-r border-gray-200 py-4 md:py-0 md:px-4">
+                <h3 class="text-lg font-medium mb-3">Motor Control Settings</h3>
+                
+                <div class="mb-3 flex items-center">
+                  <input type="checkbox" id="finger-rotation" v-model="settings.finger_rotation_enabled" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="finger-rotation" class="text-gray-700">Enable Finger Rotation Control</label>
+                </div>
+                
+                <div class="mb-3 flex items-center">
+                  <input type="checkbox" id="hand-rotation" v-model="settings.hand_rotation_enabled" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="hand-rotation" class="text-gray-700">Enable Hand Rotation Control</label>
+                </div>
+                
+                <div class="border-t border-gray-200 my-3 pt-3"></div>
+                
+                <div class="mb-3 flex items-center">
+                  <input type="checkbox" id="finger-indicator" v-model="settings.show_finger_rotation_indicator" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="finger-indicator" class="text-gray-700">Show Finger Rotation Indicator</label>
+                </div>
+                
+                <div class="flex items-center">
+                  <input type="checkbox" id="hand-indicator" v-model="settings.show_hand_rotation_indicator" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="hand-indicator" class="text-gray-700">Show Hand Rotation Indicator</label>
+                </div>
+              </div>
+              
+              <!-- Device Detection Settings -->
+              <div class="pt-4 md:pt-0 md:pl-4">
+                <h3 class="text-lg font-medium mb-3">Device Detection Settings</h3>
+                
+                <div class="mb-3 flex items-center">
+                  <input type="checkbox" id="detect-all-leds" v-model="settings.detect_all_leds" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="detect-all-leds" class="text-gray-700">Detect All LEDs</label>
+                </div>
+                
+                <div class="border-t border-gray-200 my-3 pt-3"></div>
+                
+                <div class="mb-3 flex items-center">
+                  <input type="checkbox" id="detect-led1" v-model="settings.detect_led1" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="detect-led1" class="text-gray-700">Detect LED 1</label>
+                </div>
+                
+                <div class="mb-3 flex items-center">
+                  <input type="checkbox" id="detect-led2" v-model="settings.detect_led2" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="detect-led2" class="text-gray-700">Detect LED 2</label>
+                </div>
+                
+                <div class="mb-3 flex items-center">
+                  <input type="checkbox" id="detect-led3" v-model="settings.detect_led3" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="detect-led3" class="text-gray-700">Detect LED 3</label>
+                </div>
+                
+                <div class="mb-3 flex items-center">
+                  <input type="checkbox" id="detect-motor" v-model="settings.detect_motor" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="detect-motor" class="text-gray-700">Detect Main Motor</label>
+                </div>
+                
+                <div class="mb-3 flex items-center">
+                  <input type="checkbox" id="detect-finger-motor" v-model="settings.detect_finger_motor" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="detect-finger-motor" class="text-gray-700">Detect Finger Motor</label>
+                </div>
+                
+                <div class="mb-3 flex items-center">
+                  <input type="checkbox" id="detect-hand-motor" v-model="settings.detect_hand_motor" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="detect-hand-motor" class="text-gray-700">Detect Hand Motor</label>
+                </div>
+
+                <div class="mb-3 flex  items-center">
+                  <input type="checkbox" id="detect-bulb" v-model="settings.detect_bulb" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="detect-bulb" class="text-gray-700">Detect Bulb (5 Fingers)</label>
+                </div>
+
+                <div class="flex items-center">
+                  <input type="checkbox" id="show-bulb-indicator" v-model="settings.show_bulb_indicator" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="show-bulb-indicator" class="text-gray-700">Show Bulb Indicator</label>
+                </div>
+              </div>
+            </div>
+            
+            <div class="mt-6 text-center">
+              <button @click="saveSettings" class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-6 rounded-md">
+                Save Settings
+              </button>
+            </div>
+          </div>
+
+          <!-- Network Configuration Section -->
+          <div class="bg-white rounded-lg shadow-md p-6 mt-6">
+            <h2 class="text-xl font-semibold mb-4">Network Configuration</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <!-- ESP32-CAM Configuration -->
+              <div class="border rounded-lg p-4">
+                <h3 class="text-lg font-medium mb-3 flex items-center">
+                  <span class="material-icons mr-2 text-blue-600">videocam</span>
+                  ESP32-CAM Settings
+                </h3>
+                
+                <div class="mb-4">
+                  <label class="block text-gray-700 mb-2">Camera Stream URL</label>
+                  <input type="text" v-model="settings.esp32_cam_url" 
+                        class="w-full border border-gray-300 rounded px-3 py-2"
+                        placeholder="http://192.168.1.25:81/stream">
+                </div>
+                
+                <button @click="testESP32Cam" 
+                        :class="['w-full py-2 rounded font-medium transition-colors',
+                                esp32TestStatus.testing ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700',
+                                'text-white']"
+                        :disabled="esp32TestStatus.testing">
+                  <span v-if="esp32TestStatus.testing" class="flex items-center justify-center">
+                    <span class="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-2"></span>
+                    Testing...
+                  </span>
+                  <span v-else>Test Connection</span>
+                </button>
+                
+                <div v-if="esp32TestStatus.message" 
+                    :class="['mt-2 p-2 rounded text-sm', 
+                            esp32TestStatus.success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700']">
+                  {{ esp32TestStatus.message }}
+                </div>
+              </div>
+              
+              <!-- ESP8266 Configuration -->
+              <div class="border rounded-lg p-4">
+                <h3 class="text-lg font-medium mb-3 flex items-center">
+                  <span class="material-icons mr-2 text-green-600">memory</span>
+                  ESP8266 (IoT Device) Settings
+                </h3>
+                
+                <div class="mb-4">
+                  <label class="block text-gray-700 mb-2">Device IP Address</label>
+                  <input type="text" v-model="settings.esp8266_ip" 
+                        class="w-full border border-gray-300 rounded px-3 py-2"
+                        placeholder="192.168.1.15">
+                </div>
+                
+                <button @click="testESP8266" 
+                        :class="['w-full py-2 rounded font-medium transition-colors',
+                                esp8266TestStatus.testing ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700',
+                                'text-white']"
+                        :disabled="esp8266TestStatus.testing">
+                  <span v-if="esp8266TestStatus.testing" class="flex items-center justify-center">
+                    <span class="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-2"></span>
+                    Testing...
+                  </span>
+                  <span v-else>Test Connection</span>
+                </button>
+                
+                <div v-if="esp8266TestStatus.message" 
+                    :class="['mt-2 p-2 rounded text-sm', 
+                            esp8266TestStatus.success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700']">
+                  {{ esp8266TestStatus.message }}
+                </div>
+              </div>
+            </div>
+            
+            <div class="mt-6 text-center">
+              <button @click="saveNetworkSettings" 
+                      class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-6 rounded-md">
+                Save Network Settings
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Sidebar -->
+        <div class="flex flex-col gap-6">
+          <!-- Device Control -->
+          <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-semibold mb-4">Device Control</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div v-for="(status, device) in deviceStatus" :key="device" 
+                  :class="['p-4 border rounded-lg', status === 'ON' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300']">
+                <div class="flex items-center justify-between mb-2">
+                  <div class="flex items-center">
+                    <span class="material-icons mr-2" :class="status === 'ON' ? 'text-indigo-500' : 'text-gray-400'">
+                      {{ getDeviceIcon(device) }}
+                    </span>
+                    <span class="font-medium">{{ getDeviceDisplayName(device) }}</span>
+                  </div>
+                  <label class="switch">
+                    <input type="checkbox" :checked="status === 'ON'" @change="toggleDevice(device, $event.target.checked)">
+                    <span class="slider round"></span>
+                  </label>
+                </div>
+                <div class="flex mt-2">
+                  <button @click="controlDevice(device, 'on')" 
+                      :class="['flex-1 py-1 mr-1 rounded font-medium transition-colors', 
+                      status === 'ON' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200']">
+                    ON
+                  </button>
+                  <button @click="controlDevice(device, 'off')" 
+                      :class="['flex-1 py-1 ml-1 rounded font-medium transition-colors', 
+                      status === 'OFF' ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200']">
+                    OFF
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bulb Voltage Control div -->
+          <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-semibold mb-4">Bulb Voltage Control</h2>
+            
+            <div class="p-4 bg-gradient-to-br from-yellow-50 to-orange-50 rounded-lg border border-yellow-200">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="text-lg font-medium flex items-center">
+                  <span class="material-icons mr-2 text-yellow-600">lightbulb</span>
+                  Smart Bulb
+                </h3>
+                <label class="switch">
+                  <input type="checkbox" :checked="deviceStatus.bulb === 'ON'" @change="toggleDevice('bulb', $event.target.checked)">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+              
+              <!-- Voltage Bar with 5 Segments -->
+              <div class="mb-4">
+                <div class="relative bg-gray-200 rounded-lg h-10 overflow-hidden">
+                  <!-- Voltage fill -->
+                  <div class="absolute inset-y-0 left-0 bg-gradient-to-r from-yellow-300 to-yellow-500 transition-all duration-300"
+                      :style="{width: motorValues.bulb_voltage + '%'}"></div>
+                  
+                  <!-- Segment dividers -->
+                  <div class="absolute inset-0 flex">
+                    <div v-for="i in 4" :key="i" class="flex-1 border-r-2 border-gray-300"></div>
+                    <div class="flex-1"></div>
+                  </div>
+                  
+                  <!-- Percentage text -->
+                  <div class="absolute inset-0 flex items-center justify-center">
+                    <span class="font-semibold text-gray-700">{{ Math.round(motorValues.bulb_voltage) }}%</span>
+                  </div>
+                </div>
+                
+                <!-- Finger indicators -->
+                <div class="flex justify-between mt-2 px-1">
+                  <div v-for="i in 5" :key="i" class="text-center flex-1">
+                    <div :class="['w-8 h-8 mx-auto rounded-full flex items-center justify-center text-sm font-medium transition-all',
+                                  motorValues.bulb_voltage >= (i * 20) ? 'bg-yellow-500 text-white' : 'bg-gray-200 text-gray-600']">
+                      {{ i }}
+                    </div>
+                    <div class="text-xs text-gray-500 mt-1">{{ i === 1 ? 'finger' : 'fingers' }}</div>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Manual controls -->
+              <div class="grid grid-cols-5 gap-1 mt-4">
+                <button v-for="i in 5" :key="i" 
+                        @click="setBulbVoltage((i-1) * 20)"
+                        :class="['py-2 rounded text-sm font-medium transition-all',
+                                Math.round(motorValues.bulb_voltage) === (i-1) * 20 ? 
+                                'bg-yellow-500 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-700']">
+                  {{ (i-1) * 20 }}%
+                </button>
+              </div>
+              
+              <!-- Status indicator -->
+              <div class="mt-3 flex items-center justify-center">
+                <div :class="['w-3 h-3 rounded-full mr-2', deviceStatus.bulb === 'ON' ? 'bg-yellow-500' : 'bg-gray-300']"></div>
+                <span class="text-sm text-gray-600">
+                  {{ deviceStatus.bulb === 'ON' ? `Bulb ON at ${Math.round(motorValues.bulb_voltage)}%` : 'Bulb OFF' }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Motor Control -->
+          <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-semibold mb-4">Motor Control</h2>
+            
+            <!-- Finger Motor -->
+            <div class="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <h3 class="text-lg font-medium mb-2">Finger Motor</h3>
+              
+              <div class="flex items-center mb-2">
+                <div class="w-full mr-3 bg-gray-200 rounded-full h-2.5">
+                  <div class="bg-green-500 h-2.5 rounded-full transition-all duration-300" 
+                      :style="{width: motorValues.finger_motor + '%'}"></div>
+                </div>
+                <span class="text-sm font-medium text-gray-700 w-10">{{ Math.round(motorValues.finger_motor) }}%</span>
+              </div>
+              
+              <!-- Manual voltage control slider -->
+              <div class="mt-3 mb-3">
+                <input type="range" min="0" max="100" v-model="fingerMotorManual" 
+                      @input="setMotorVoltage('finger_motor', fingerMotorManual)"
+                      class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                <div class="flex justify-between text-xs text-gray-500 mt-1">
+                  <span>0%</span>
+                  <span>25%</span>
+                  <span>50%</span>
+                  <span>75%</span>
+                  <span>100%</span>
+                </div>
+              </div>
+              
+              <div class="h-44 mt-3">
+                <canvas id="fingerMotorChart" width="200" height="200"></canvas>
+              </div>
+            </div>
+            
+            <!-- Hand Motor -->
+            <div class="p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <h3 class="text-lg font-medium mb-2">Hand Motor</h3>
+              
+              <div class="flex items-center mb-2">
+                <div class="w-full mr-3 bg-gray-200 rounded-full h-2.5">
+                  <div class="bg-orange-500 h-2.5 rounded-full transition-all duration-300" 
+                      :style="{width: motorValues.hand_motor + '%'}"></div>
+                </div>
+                <span class="text-sm font-medium text-gray-700 w-10">{{ Math.round(motorValues.hand_motor) }}%</span>
+              </div>
+              
+              <!-- Manual voltage control slider -->
+              <div class="mt-3 mb-3">
+                <input type="range" min="0" max="100" v-model="handMotorManual" 
+                      @input="setMotorVoltage('hand_motor', handMotorManual)"
+                      class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                <div class="flex justify-between text-xs text-gray-500 mt-1">
+                  <span>0%</span>
+                  <span>25%</span>
+                  <span>50%</span>
+                  <span>75%</span>
+                  <span>100%</span>
+                </div>
+              </div>
+              
+              <div class="h-44 mt-3">
+                <canvas id="handMotorChart" width="200" height="200"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Instructions Card -->
+    <div class="bg-white rounded-lg shadow-md p-6 mt-6">
+      <h2 class="text-xl font-semibold mb-2">Gesture Instructions</h2>
+      <p class="mb-3">
+        <strong>Bulb Voltage Control:</strong> Raise 0-5 fingers to control bulb brightness 
+        (0 fingers = 0%, 1 finger = 20%, 2 fingers = 40%, 3 fingers = 60%, 4 fingers = 80%, 5 fingers = 100%).
+      </p>
+      <p class="mb-3">
+        <strong>Finger Rotation Gesture:</strong> Adjust the angle between your thumb and index finger 
+        (closed = 0%, fully spread = 100%) to control the finger motor voltage.
+      </p>
+      <p>
+        <strong>Hand Rotation Gesture:</strong> Rotate your wrist from palm down (0%) to palm up (100%) 
+        to control the hand motor voltage.
+      </p>
+    </div>
+    </div>
+  </div>
+
+  <style>
+    /* Custom switch styling */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+    
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      -webkit-transition: .4s;
+      transition: .4s;
+    }
+    
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      -webkit-transition: .4s;
+      transition: .4s;
+    }
+    
+    input:checked + .slider {
+      background-color: #6366f1;
+    }
+    
+    input:focus + .slider {
+      box-shadow: 0 0 1px #6366f1;
+    }
+    
+    input:checked + .slider:before {
+      -webkit-transform: translateX(20px);
+      -ms-transform: translateX(20px);
+      transform: translateX(20px);
+    }
+    
+    .slider.round {
+      border-radius: 34px;
+    }
+    
+    .slider.round:before {
+      border-radius: 50%;
+    }
+  </style>
+
+  <script>
+    const { createApp, ref, onMounted, watch } = Vue;
+    
+    createApp({
+      setup() {
+        const loading = ref(true);
+        const settings = ref({
+          camera_source: "ESP32-CAM",
+          gesture_detection_enabled: true,
+          show_landmarks: true,
+          finger_rotation_enabled: false,
+          hand_rotation_enabled: false,   
+          show_finger_rotation_indicator: false,
+          show_hand_rotation_indicator: false,   
+          detect_all_leds: true,
+          detect_led1: true,
+          detect_led2: true,
+          detect_led3: true,
+          detect_motor: false,
+          detect_finger_motor: false,
+          detect_hand_motor: false,
+          detect_bulb: false,
+          show_bulb_indicator: false,
+          esp32_cam_url: "http://192.168.1.25:81/stream",
+          esp8266_ip: "192.168.1.15",
+        });
+        const cameras = ref({});
+        const deviceStatus = ref({});
+        const motorValues = ref({ finger_motor: 0, hand_motor: 0, bulb_voltage: 0  });
+        const videoFeedUrl = ref('/video_feed');
+        let socket = null;
+        let fingerMotorChart = null;
+        let handMotorChart = null;
+        const esp32TestStatus = ref({ testing: false, success: false, message: '' });
+        const esp8266TestStatus = ref({ testing: false, success: false, message: '' });
+        const fingerMotorManual = ref(0);
+        const handMotorManual = ref(0);
+        const deviceIcons = {
+          led1: 'lightbulb',
+          led2: 'lightbulb',
+          led3: 'lightbulb',
+          motor: 'speed',
+          finger_motor: 'fingerprint',
+          hand_motor: 'pan_tool',
+          bulb: 'lightbulb'
+        };
+        
+        const deviceDisplayNames = {
+          led1: "LED 1",
+          led2: "LED 2",
+          led3: "LED 3",
+          motor: "Main Motor",
+          finger_motor: "Finger Motor",
+          hand_motor: "Hand Motor",
+          bulb: "Smart Bulb"
+        };
+        
+        // Get icon for a device
+        const getDeviceIcon = (device) => {
+          return deviceIcons[device] || 'device_unknown';
+        };
+        
+        // Get display name for a device
+        const getDeviceDisplayName = (device) => {
+          return deviceDisplayNames[device] || device;
+        };
+        
+        // Initialize the application
+        const initApp = async () => {
+          try {
+            // Fetch initial data
+            const [settingsData, camerasData, deviceData] = await Promise.all([
+              fetchSettings(),
+              fetchCameras(),
+              fetchDeviceStatus()
+            ]);
+            
+            settings.value = settingsData;
+            cameras.value = camerasData;
+            deviceStatus.value = deviceData;
+            
+            // Update video feed URL with timestamp to prevent caching
+            updateVideoFeedUrl();
+            
+            // Setup socket connection
+            setupSocket();
+            
+            // Initialize charts
+            setupCharts();
+            
+            // Done loading
+            loading.value = false;
+          } catch (error) {
+            console.error("Error initializing app:", error);
+          }
+        };
+        
+        // Add timestamp to video feed URL to prevent caching
+        const updateVideoFeedUrl = () => {
+          const timestamp = new Date().getTime();
+          videoFeedUrl.value = `/video_feed?t=${timestamp}`;
+        };
+        
+          const setBulbVoltage = async (voltage) => {
+          try {
+            const response = await axios.post(`/api/device/bulb/voltage/${voltage}`);
+            if (response.data.success) {
+              motorValues.value.bulb_voltage = voltage;
+            }
+          } catch (error) {
+            console.error('Error setting bulb voltage:', error);
+            alert('Failed to set bulb voltage. Please try again.');
+          }
+        };
+
+        const testESP32Cam = async () => {
+          esp32TestStatus.value = { testing: true, success: false, message: '' };
+          try {
+            const response = await axios.post('/api/test/connection', {
+              type: 'esp32cam',
+              url: settings.value.esp32_cam_url
+            });
+            esp32TestStatus.value = {
+              testing: false,
+              success: response.data.success,
+              message: response.data.message
+            };
+          } catch (error) {
+            esp32TestStatus.value = {
+              testing: false,
+              success: false,
+              message: 'Test failed: ' + error.message
+            };
+          }
+        };
+  
+        const testESP8266 = async () => {
+          esp8266TestStatus.value = { testing: true, success: false, message: '' };
+          try {
+            const response = await axios.post('/api/test/connection', {
+              type: 'esp8266',
+              ip: settings.value.esp8266_ip
+            });
+            esp8266TestStatus.value = {
+              testing: false,
+              success: response.data.success,
+              message: response.data.message
+            };
+          } catch (error) {
+            esp8266TestStatus.value = {
+              testing: false,
+              success: false,
+              message: 'Test failed: ' + error.message
+            };
+          }
+        };
+  
+        // Save network settings
+        const saveNetworkSettings = async () => {
+          try {
+            await axios.post('/api/settings', settings.value);
+            alert('Network settings saved successfully!');
+            // Update camera sources after saving
+            cameras.value = await fetchCameras();
+            updateVideoFeedUrl();
+          } catch (error) {
+            console.error('Error saving network settings:', error);
+            alert('Failed to save network settings. Please try again.');
+          }
+        };
+  
+        // Set motor voltage
+        const setMotorVoltage = async (motor, voltage) => {
+          try {
+            const response = await axios.post(`/api/motor/${motor}/voltage/${voltage}`);
+            if (response.data.success) {
+              motorValues.value[motor] = voltage;
+            }
+          } catch (error) {
+            console.error(`Error setting ${motor} voltage:`, error);
+          }
+        };
+
+        watch(() => motorValues.value.finger_motor, (newVal) => {
+          fingerMotorManual.value = newVal;
+        });
+        
+        watch(() => motorValues.value.hand_motor, (newVal) => {
+          handMotorManual.value = newVal;
+        });
+
+        // Setup WebSocket connection
+        const setupSocket = () => {
+          socket = io();
+          
+          socket.on('connect', () => {
+            console.log('Connected to server');
+          });
+          
+          socket.on('device_status', (status) => {
+            deviceStatus.value = status;
+          });
+          
+          socket.on('motor_values', (values) => {
+            motorValues.value = values;
+            updateCharts();
+          });
+          
+          socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+          });
+        };
+        
+        // Setup Chart.js charts
+        const setupCharts = () => {
+          // Finger motor chart
+          const fingerCtx = document.getElementById('fingerMotorChart').getContext('2d');
+          fingerMotorChart = new Chart(fingerCtx, {
+            type: 'doughnut',
+            data: {
+              labels: ['Used', 'Available'],
+              datasets: [{
+                data: [motorValues.value.finger_motor, 100 - motorValues.value.finger_motor],
+                backgroundColor: ['#10b981', '#e5e7eb'],
+                hoverBackgroundColor: ['#34d399', '#e5e7eb'],
+                borderWidth: 0
+              }]
+            },
+            options: {
+              cutout: '70%',
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: {
+                  display: false
+                },
+                tooltip: {
+                  callbacks: {
+                    label: function(context) {
+                      return `${context.label}: ${context.raw}%`;
+                    }
+                  }
+                }
+              }
+            }
+          });
+          
+          // Hand motor chart
+          const handCtx = document.getElementById('handMotorChart').getContext('2d');
+          handMotorChart = new Chart(handCtx, {
+            type: 'doughnut',
+            data: {
+              labels: ['Used', 'Available'],
+              datasets: [{
+                data: [motorValues.value.hand_motor, 100 - motorValues.value.hand_motor],
+                backgroundColor: ['#f97316', '#e5e7eb'],
+                hoverBackgroundColor: ['#fb923c', '#e5e7eb'],
+                borderWidth: 0
+              }]
+            },
+            options: {
+              cutout: '70%',
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: {
+                  display: false
+                },
+                tooltip: {
+                  callbacks: {
+                    label: function(context) {
+                      return `${context.label}: ${context.raw}%`;
+                    }
+                  }
+                }
+              }
+            }
+          });
+        };
+        
+        
+        // Update chart values
+        const updateCharts = () => {
+          if (fingerMotorChart) {
+            fingerMotorChart.data.datasets[0].data = [
+              motorValues.value.finger_motor, 
+              100 - motorValues.value.finger_motor
+            ];
+            fingerMotorChart.update();
+          }
+          
+          if (handMotorChart) {
+            handMotorChart.data.datasets[0].data = [
+              motorValues.value.hand_motor, 
+              100 - motorValues.value.hand_motor
+            ];
+            handMotorChart.update();
+          }
+        };
+        
+        // Fetch settings from API
+        const fetchSettings = async () => {
+          try {
+            const response = await axios.get('/api/settings');
+            return response.data;
+          } catch (error) {
+            console.error('Error fetching settings:', error);
+            return settings.value;
+          }
+        };
+        
+        const settingsChangeTimeout = ref(null);
+  
+      // Update the updateSettings function
+      const updateSettings = async () => {
+        if (settingsChangeTimeout.value) {
+          clearTimeout(settingsChangeTimeout.value);
+        }
+        
+        // Set a new timeout to delay the settings update
+        settingsChangeTimeout.value = setTimeout(async () => {
+          try {
+                console.log('Applying settings changes...');
+                await axios.post('/api/settings', settings.value);
+                setTimeout(() => {
+                  updateVideoFeedUrl();
+                }, 1000);
+              } catch (error) {
+                console.error('Error updating settings:', error);
+              }
+            }, 500); 
+          };
+        
+        // Save settings
+        const saveSettings = async () => {
+          try {
+            await axios.post('/api/settings', settings.value);
+            alert('Settings saved successfully!');
+            updateVideoFeedUrl();
+          } catch (error) {
+            console.error('Error saving settings:', error);
+            alert('Failed to save settings. Please try again.');
+          }
+        };
+        
+        // Fetch cameras from API
+        const fetchCameras = async () => {
+          try {
+            const response = await axios.get('/api/cameras');
+            return response.data;
+          } catch (error) {
+            console.error('Error fetching cameras:', error);
+            return {};
+          }
+        };
+        
+        // Fetch device status from API
+        const fetchDeviceStatus = async () => {
+          try {
+            const response = await axios.get('/api/device/status');
+            return response.data;
+          } catch (error) {
+            console.error('Error fetching device status:', error);
+            return {};
+          }
+        };
+        
+        // Control a device
+        const controlDevice = async (device, action) => {
+          try {
+            await axios.post(`/api/device/${device}/${action}`);
+          } catch (error) {
+            console.error(`Error controlling ${device}:`, error);
+            alert(`Failed to control ${device}. Please try again.`);
+          }
+        };
+        
+        // Toggle device state
+        const toggleDevice = async (device, isOn) => {
+          await controlDevice(device, isOn ? 'on' : 'off');
+        };
+        
+        // Initialize app on mount
+        onMounted(() => {
+          initApp();
+          
+          // Cleanup function for when component unmounts
+          return () => {
+            if (socket) {
+              socket.disconnect();
+            }
+            if (fingerMotorChart) {
+              fingerMotorChart.destroy();
+            }
+            if (handMotorChart) {
+              handMotorChart.destroy();
+            }
+          };
+        });
+        
+        // Update charts whenever motor values change
+        watch(motorValues, () => {
+          updateCharts();
+        });
+        
+        return {
+          loading,
+          settings,
+          cameras,
+          deviceStatus,
+          motorValues,
+          videoFeedUrl,
+          getDeviceIcon,
+          getDeviceDisplayName,
+          updateSettings,
+          saveSettings,
+          controlDevice,
+          toggleDevice,
+          setBulbVoltage,
+          esp32TestStatus,
+          esp8266TestStatus,
+          fingerMotorManual,
+          handMotorManual,
+          testESP32Cam,
+          testESP8266,
+          saveNetworkSettings,
+          setMotorVoltage
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
