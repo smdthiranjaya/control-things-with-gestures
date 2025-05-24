@@ -12,7 +12,7 @@ from websocket_handlers import register_socketio_handlers, start_update_thread
 
 def create_app():
     """Create and configure the Flask application"""
-    app = Flask(__name__, static_folder='../frontend-vue')
+    app = Flask(__name__, static_folder='./frontend-vue')
     CORS(app)
     
     # Initialize SocketIO
