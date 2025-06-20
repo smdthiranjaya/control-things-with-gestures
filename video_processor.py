@@ -78,8 +78,7 @@ def generate_frames():
                     current_cap_source = current_source
                     camera_initialized = True
                 else:
-                    # Don't switch cameras, just show an error frame
-                    camera_initialized = True  # Exit the loop, we'll show error frames
+                    camera_initialized = True 
             else:
                 camera_initialized = True
         except Exception as e:
@@ -95,7 +94,7 @@ def generate_frames():
             # Frame rate control - skip processing if too soon after last frame
             current_time = time.time()
             if current_time - last_frame_time < min_frame_interval:
-                time.sleep(0.01)  # Short sleep to prevent CPU hogging
+                time.sleep(0.01) 
                 continue
                 
             last_frame_time = current_time
@@ -107,7 +106,7 @@ def generate_frames():
                 source = camera_sources.get(current_source)
                 release_camera()
                 current_cap_source = None
-                consecutive_errors = 0  # Reset error counter on explicit camera change
+                consecutive_errors = 0 
                 continue
             
             # Try to read a frame

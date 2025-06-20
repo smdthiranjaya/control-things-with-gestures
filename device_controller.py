@@ -6,8 +6,9 @@ import time
 from config import device_status, motor_values, get_esp8266_ip, settings
 
 # Track last connection failure to avoid excessive retries
+# Make these variables truly global for the module
 _last_connection_failure = 0
-_connection_failure_cooldown = 5  # seconds
+_connection_failure_cooldown = 5 
 _last_connection_error_message = ""
 
 def control_device_direct(device, action):
@@ -106,12 +107,6 @@ def control_led_devices(fingers, prev_fingers):
                 print(f"Gesture detected: Controlling {device} -> {action}")
                 control_device_direct(device, action)
     
-    # Control motor (this was in the original code)
-    if settings.get("detect_motor", True) and fingers[3] != prev_fingers[3]:
-        action = "on" if fingers[3] == 1 else "off"
-        print(f"Gesture detected: Controlling motor -> {action}")
-        control_device_direct("motor", action)
-    
     # Control buzzer based on all 5 fingers
     if settings.get("detect_buzzer", True):
         # Buzzer ON when all 5 fingers are raised
@@ -129,6 +124,8 @@ def control_led_devices(fingers, prev_fingers):
 
 def control_bulb_voltage(total_fingers):
     """Control bulb voltage based on total fingers raised"""
+    global _last_connection_failure 
+    
     if not settings.get("detect_bulb", True):
         return
     
@@ -162,6 +159,8 @@ def control_bulb_voltage(total_fingers):
 
 def control_finger_motor(motor_value):
     """Control finger motor with voltage"""
+    global _last_connection_failure 
+    
     if not (settings.get("finger_rotation_enabled", True) and 
             settings.get("detect_finger_motor", True)):
         return
@@ -193,6 +192,8 @@ def control_finger_motor(motor_value):
 
 def control_hand_motor(motor_value):
     """Control hand motor with voltage"""
+    global _last_connection_failure 
+    
     if not (settings.get("hand_rotation_enabled", True) and 
             settings.get("detect_hand_motor", True)):
         return
@@ -248,13 +249,14 @@ def test_esp8266_connection(ip=None):
 
 def set_device_voltage(device, voltage):
     """Set voltage for motor devices"""
+    global _last_connection_failure 
+    
     if device not in ["finger_motor", "hand_motor", "bulb"]:
         return False, "Invalid device"
     
     voltage = max(0, min(100, voltage)) 
     motor_values[device if device != "bulb" else "bulb_voltage"] = voltage
     
-    # Check if we're in cooldown period
     current_time = time.time()
     if current_time - _last_connection_failure < _connection_failure_cooldown:
         device_status[device] = "ON" if voltage > 0 else "OFF"
@@ -276,6 +278,5 @@ def set_device_voltage(device, voltage):
         _last_connection_failure = time.time()
         print(f"Error setting {device} voltage: {e}")
         
-        # Still update status locally
         device_status[device] = "ON" if voltage > 0 else "OFF"
         return True, f"Updated locally (ESP8266 error: {str(e)})"

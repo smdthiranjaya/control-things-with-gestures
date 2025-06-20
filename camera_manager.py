@@ -20,9 +20,9 @@ def detect_cameras():
         local_cameras = {}
         for i in range(3):  # Try first 3 camera indices
             cap_test = cv2.VideoCapture(i)
-            cap_test.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 1000)  # 1 second timeout
+            cap_test.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 1000) 
             
-            ret = cap_test.grab()  # Just grab one frame to verify
+            ret = cap_test.grab() 
             if ret:
                 local_cameras[f"Computer Cam {i}"] = i
                 print(f"Verified working camera at index {i}")
@@ -31,7 +31,6 @@ def detect_cameras():
         # Include ESP32-CAM if it was in the original sources
         if "ESP32-CAM" in current_sources:
             esp32_url = current_sources["ESP32-CAM"]
-            # Don't attempt connection here, just add it back
             local_cameras["ESP32-CAM"] = esp32_url
             print(f"Added ESP32-CAM option (will validate when used): {esp32_url}")
         
@@ -88,7 +87,7 @@ def open_camera(source, source_name):
     release_camera()
     
     # Limit to 2 attempts only
-    max_attempts = 1  # Just 1 attempt to reduce messages
+    max_attempts = 1 
     
     try:
         # Handle different camera source types
