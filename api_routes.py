@@ -4,6 +4,7 @@ Flask API routes
 import time
 import cv2
 import requests
+import os
 from flask import request, jsonify, send_from_directory, Response
 from config import (
     settings, last_settings_change, device_status, motor_values, 
@@ -20,6 +21,14 @@ def register_routes(app, socketio):
     @app.route('/')
     def index():
         return send_from_directory(app.static_folder, 'index.html')
+    
+    # Handle 404 errors by returning index.html for client-side routing
+    @app.errorhandler(404)
+    def not_found(e):
+        # Only return index.html for non-API paths
+        if not request.path.startswith('/api/') and not request.path.startswith('/video_feed'):
+            return send_from_directory(app.static_folder, 'index.html')
+        return jsonify({"error": "Not found"}), 404
     
     # Camera routes
     @app.route('/api/cameras', methods=['GET'])

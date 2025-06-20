@@ -30,6 +30,10 @@ def generate_frames():
     """Video streaming generator with gesture detection"""
     global prev_fingers, prev_finger_angle, prev_hand_angle
     
+    # For frame rate control
+    last_frame_time = 0
+    min_frame_interval = 0.05  # 20fps max
+    
     # Initialize bulb_voltage if not present
     if "bulb_voltage" not in motor_values:
         motor_values["bulb_voltage"] = 0
@@ -59,6 +63,7 @@ def generate_frames():
     
     # Initialize camera
     camera_initialized = False
+    
     while not camera_initialized:
         try:
             # Check if camera needs initialization or source changed
@@ -73,7 +78,8 @@ def generate_frames():
                     current_cap_source = current_source
                     camera_initialized = True
                 else:
-                    time.sleep(1)
+                    # Don't switch cameras, just show an error frame
+                    camera_initialized = True  # Exit the loop, we'll show error frames
             else:
                 camera_initialized = True
         except Exception as e:
@@ -86,13 +92,22 @@ def generate_frames():
     
     while True:
         try:
-            # Check if camera source has changed
+            # Frame rate control - skip processing if too soon after last frame
+            current_time = time.time()
+            if current_time - last_frame_time < min_frame_interval:
+                time.sleep(0.01)  # Short sleep to prevent CPU hogging
+                continue
+                
+            last_frame_time = current_time
+            
+            # Check if camera source has changed from dropdown selection
             if current_source != settings.get("camera_source"):
                 print(f"Camera source changed from {current_source} to {settings.get('camera_source')}")
                 current_source = settings.get("camera_source")
                 source = camera_sources.get(current_source)
                 release_camera()
                 current_cap_source = None
+                consecutive_errors = 0  # Reset error counter on explicit camera change
                 continue
             
             # Try to read a frame
@@ -103,15 +118,15 @@ def generate_frames():
                 print(f"Frame read error: {consecutive_errors}/{max_consecutive_errors}")
                 
                 if consecutive_errors >= max_consecutive_errors:
-                    print("Too many consecutive errors, reopening camera...")
+                    print(f"Too many consecutive errors, reopening camera {current_source}...")
                     release_camera()
                     current_cap_source = None
                     consecutive_errors = 0
-                    time.sleep(1) 
+                    time.sleep(1)
                     continue
                     
                 # Provide an error frame
-                frame = create_error_frame("Camera connection error")
+                frame = create_error_frame(f"Camera {current_source} connection error")
             else:
                 # Reset error counter on successful frame
                 consecutive_errors = 0

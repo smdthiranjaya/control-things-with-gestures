@@ -19,7 +19,6 @@
         <h1 class="text-3xl font-bold text-indigo-600">Gesture Control Dashboard</h1>
         <p class="text-gray-600">Control smart devices with hand gestures through computer vision</p>
       </header>
-
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <!-- Main Content - Camera Feed -->
         <div class="lg:col-span-2">
@@ -49,7 +48,6 @@
               </div>
             </div>
           </div>
-
           <!-- Settings Section -->
           <div class="bg-white rounded-lg shadow-md p-6 mt-6">
             <h2 class="text-xl font-semibold mb-4">Settings</h2>
@@ -142,9 +140,27 @@
                 </div>
                 
                 <div class="mb-3 flex items-center">
+                  <input type="checkbox" id="detect-led4" v-model="settings.detect_led4" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="detect-led4" class="text-gray-700">Detect LED 4</label>
+                </div>
+                
+                <div class="mb-3 flex items-center">
+                  <input type="checkbox" id="detect-led5" v-model="settings.detect_led5" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="detect-led5" class="text-gray-700">Detect LED 5</label>
+                </div>
+                
+                <div class="mb-3 flex items-center">
                   <input type="checkbox" id="detect-motor" v-model="settings.detect_motor" 
                     @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
                   <label for="detect-motor" class="text-gray-700">Detect Main Motor</label>
+                </div>
+                
+                <div class="mb-3 flex items-center">
+                  <input type="checkbox" id="detect-buzzer" v-model="settings.detect_buzzer" 
+                    @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
+                  <label for="detect-buzzer" class="text-gray-700">Detect Buzzer</label>
                 </div>
                 
                 <div class="mb-3 flex items-center">
@@ -158,13 +174,11 @@
                     @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
                   <label for="detect-hand-motor" class="text-gray-700">Detect Hand Motor</label>
                 </div>
-
                 <div class="mb-3 flex  items-center">
                   <input type="checkbox" id="detect-bulb" v-model="settings.detect_bulb" 
                     @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
                   <label for="detect-bulb" class="text-gray-700">Detect Bulb (5 Fingers)</label>
                 </div>
-
                 <div class="flex items-center">
                   <input type="checkbox" id="show-bulb-indicator" v-model="settings.show_bulb_indicator" 
                     @change="updateSettings" class="mr-2 h-5 w-5 text-indigo-600">
@@ -179,7 +193,6 @@
               </button>
             </div>
           </div>
-
           <!-- Network Configuration Section -->
           <div class="bg-white rounded-lg shadow-md p-6 mt-6">
             <h2 class="text-xl font-semibold mb-4">Network Configuration</h2>
@@ -260,7 +273,6 @@
             </div>
           </div>
         </div>
-
         <!-- Right Sidebar -->
         <div class="flex flex-col gap-6">
           <!-- Device Control -->
@@ -296,7 +308,6 @@
               </div>
             </div>
           </div>
-
           <!-- Bulb Voltage Control div -->
           <div class="bg-white rounded-lg shadow-md p-6">
             <h2 class="text-xl font-semibold mb-4">Bulb Voltage Control</h2>
@@ -364,7 +375,6 @@
               </div>
             </div>
           </div>
-
           <!-- Motor Control -->
           <div class="bg-white rounded-lg shadow-md p-6">
             <h2 class="text-xl font-semibold mb-4">Motor Control</h2>
@@ -438,6 +448,14 @@
     <div class="bg-white rounded-lg shadow-md p-6 mt-6">
       <h2 class="text-xl font-semibold mb-2">Gesture Instructions</h2>
       <p class="mb-3">
+        <strong>Individual Finger Control:</strong> Each finger controls its corresponding LED 
+        (Finger 1 = LED1, Finger 2 = LED2, Finger 3 = LED3, Finger 4 = LED4, Finger 5 = LED5).
+      </p>
+      <p class="mb-3">
+        <strong>Buzzer Control:</strong> Open all 5 fingers to turn the buzzer ON. 
+        Close all fingers (make a fist) to turn the buzzer OFF.
+      </p>
+      <p class="mb-3">
         <strong>Bulb Voltage Control:</strong> Raise 0-5 fingers to control bulb brightness 
         (0 fingers = 0%, 1 finger = 20%, 2 fingers = 40%, 3 fingers = 60%, 4 fingers = 80%, 5 fingers = 100%).
       </p>
@@ -452,7 +470,6 @@
     </div>
     </div>
   </div>
-
   <style>
     /* Custom switch styling */
     .switch {
@@ -514,7 +531,6 @@
       border-radius: 50%;
     }
   </style>
-
   <script>
     const { createApp, ref, onMounted, watch } = Vue;
     
@@ -533,10 +549,13 @@
           detect_led1: true,
           detect_led2: true,
           detect_led3: true,
+          detect_led4: true,
+          detect_led5: true,
           detect_motor: false,
           detect_finger_motor: false,
           detect_hand_motor: false,
           detect_bulb: false,
+          detect_buzzer: false,
           show_bulb_indicator: false,
           esp32_cam_url: "http://192.168.1.25:81/stream",
           esp8266_ip: "192.168.1.15",
@@ -553,23 +572,29 @@
         const fingerMotorManual = ref(0);
         const handMotorManual = ref(0);
         const deviceIcons = {
-          led1: 'lightbulb',
-          led2: 'lightbulb',
-          led3: 'lightbulb',
-          motor: 'speed',
-          finger_motor: 'fingerprint',
-          hand_motor: 'pan_tool',
-          bulb: 'lightbulb'
+          led1: "lightbulb",
+          led2: "lightbulb",
+          led3: "lightbulb",
+          led4: "lightbulb",
+          led5: "lightbulb",
+          motor: "speed",
+          finger_motor: "fingerprint",
+          hand_motor: "pan_tool",
+          bulb: "lightbulb",
+          buzzer: "volume_up",
         };
-        
+
         const deviceDisplayNames = {
           led1: "LED 1",
           led2: "LED 2",
           led3: "LED 3",
+          led4: "LED 4",
+          led5: "LED 5",
           motor: "Main Motor",
           finger_motor: "Finger Motor",
           hand_motor: "Hand Motor",
-          bulb: "Smart Bulb"
+          bulb: "Smart Bulb",
+          buzzer: "Buzzer",
         };
         
         // Get icon for a device
@@ -629,7 +654,6 @@
             alert('Failed to set bulb voltage. Please try again.');
           }
         };
-
         const testESP32Cam = async () => {
           esp32TestStatus.value = { testing: true, success: false, message: '' };
           try {
@@ -697,7 +721,6 @@
             console.error(`Error setting ${motor} voltage:`, error);
           }
         };
-
         watch(() => motorValues.value.finger_motor, (newVal) => {
           fingerMotorManual.value = newVal;
         });
@@ -705,7 +728,6 @@
         watch(() => motorValues.value.hand_motor, (newVal) => {
           handMotorManual.value = newVal;
         });
-
         // Setup WebSocket connection
         const setupSocket = () => {
           socket = io();
@@ -828,25 +850,27 @@
         
         const settingsChangeTimeout = ref(null);
   
-      // Update the updateSettings function
-      const updateSettings = async () => {
-        if (settingsChangeTimeout.value) {
-          clearTimeout(settingsChangeTimeout.value);
-        }
-        
-        // Set a new timeout to delay the settings update
-        settingsChangeTimeout.value = setTimeout(async () => {
-          try {
-                console.log('Applying settings changes...');
-                await axios.post('/api/settings', settings.value);
-                setTimeout(() => {
-                  updateVideoFeedUrl();
-                }, 1000);
-              } catch (error) {
-                console.error('Error updating settings:', error);
-              }
-            }, 500); 
+        function debounce(func, wait) {
+          let timeout;
+          return function() {
+            const context = this;
+            const args = arguments;
+            clearTimeout(timeout);
+            timeout = setTimeout(() => func.apply(context, args), wait);
           };
+        }
+      // Update the updateSettings function
+      const updateSettings = debounce(async () => {
+        try {
+          console.log("Applying settings changes...");
+          await axios.post("/api/settings", settings.value);
+          setTimeout(() => {
+            updateVideoFeedUrl();
+          }, 1000);
+        } catch (error) {
+          console.error("Error updating settings:", error);
+        }
+      }, 500);
         
         // Save settings
         const saveSettings = async () => {

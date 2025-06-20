@@ -36,6 +36,9 @@ device_status = {
     "led1": "OFF",
     "led2": "OFF",
     "led3": "OFF",
+    "led4": "OFF",  # Added LED 4
+    "led5": "OFF",  # Added LED 5
+    "buzzer": "OFF", # Added buzzer
     "motor": "OFF",
     "finger_motor": "OFF",
     "hand_motor": "OFF",
@@ -62,6 +65,9 @@ settings = {
     "detect_led1": True,
     "detect_led2": True,
     "detect_led3": True,
+    "detect_led4": True,  # Added LED 4 setting
+    "detect_led5": True,  # Added LED 5 setting
+    "detect_buzzer": True, # Added buzzer setting
     "detect_motor": False, 
     "detect_bulb": False,
     "show_bulb_indicator": False,
