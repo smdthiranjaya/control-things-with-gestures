@@ -36,8 +36,8 @@
 // ===========================
 // Enter your WiFi credentials
 // ===========================
-const char *ssid = "SMD SLT Fiber";
-const char *password = "97011408525#";
+const char *ssid = "SLT";
+const char *password = "PASS";
 
 void startCameraServer();
 void setupLedFlash(int pin);

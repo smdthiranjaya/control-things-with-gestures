@@ -36,9 +36,6 @@ device_status = {
     "led1": "OFF",
     "led2": "OFF",
     "led3": "OFF",
-    "led4": "OFF", 
-    "led5": "OFF",  
-    "buzzer": "OFF",
     "motor": "OFF",
     "finger_motor": "OFF",
     "hand_motor": "OFF",
@@ -54,7 +51,7 @@ motor_values = {
 
 # Application settings
 settings = {
-    "camera_source": "ESP32-CAM",
+    "camera_source": "Computer Cam 0",  # Changed to use USB camera by default
     "gesture_detection_enabled": True,
     "show_landmarks": True,
     "finger_rotation_enabled": False,
@@ -65,9 +62,6 @@ settings = {
     "detect_led1": True,
     "detect_led2": True,
     "detect_led3": True,
-    "detect_led4": True,  
-    "detect_led5": True, 
-    "detect_buzzer": False,
     "detect_motor": False, 
     "detect_bulb": False,
     "show_bulb_indicator": False,

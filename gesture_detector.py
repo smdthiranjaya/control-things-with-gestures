@@ -59,7 +59,7 @@ def calculate_wrist_rotation(landmarks):
 
 def detect_fingers(landmarks, hand_label):
     """Detect which fingers are raised"""
-    fingers = [0] * 5 
+    fingers = [0] * 5  # Reset fingers for current detection
     
     # Thumb detection
     thumb_tip = landmarks[4]
