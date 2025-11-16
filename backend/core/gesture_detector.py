@@ -5,16 +5,16 @@ import cv2
 import numpy as np
 import math
 import mediapipe as mp
-from config import settings
+from backend.config import settings
 
-# MediaPipe setup
+# MediaPipe setup - Optimized for performance
 mp_drawing = mp.solutions.drawing_utils
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
     static_image_mode=False,
-    model_complexity=1,
-    min_detection_confidence=0.7,
-    min_tracking_confidence=0.7,
+    model_complexity=0,  # 0 = Lite model (faster), 1 = Full model
+    min_detection_confidence=0.5,  # Lower = faster detection
+    min_tracking_confidence=0.5,  # Lower = faster tracking
     max_num_hands=1
 )
 

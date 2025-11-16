@@ -5,19 +5,13 @@ import cv2
 import numpy as np
 import time
 from collections import deque
-from config import (
+from backend.config import (
     camera_sources, settings, last_settings_change, settings_cooldown,
-    prev_fingers, prev_finger_angle, prev_hand_angle, smoothing_factor,
-    finger_angle_buffer, hand_angle_buffer, motor_values, device_status
+    device_status
 )
-from camera_manager import open_camera, release_camera, is_camera_open, read_frame
-from gesture_detector import (
-    process_frame_for_gestures, draw_rotation_indicators, draw_bulb_indicator
-)
-from device_controller import (
-    control_led_devices, control_bulb_voltage, control_finger_motor,
-    control_hand_motor, reset_bulb_when_no_hand
-)
+from backend.core.camera_manager import open_camera, release_camera, is_camera_open, read_frame
+from backend.core.gesture_detector import process_frame_for_gestures
+from backend.core.device_controller import control_devices_by_gesture
 
 def create_error_frame(message):
     """Create an error frame with a message"""
@@ -28,13 +22,6 @@ def create_error_frame(message):
 
 def generate_frames():
     """Video streaming generator with gesture detection"""
-    global prev_fingers, prev_finger_angle, prev_hand_angle
-    
-    # Initialize bulb_voltage if not present
-    if "bulb_voltage" not in motor_values:
-        motor_values["bulb_voltage"] = 0
-    if "bulb" not in device_status:
-        device_status["bulb"] = "OFF"
     
     # Ensure we have at least one camera source
     if not camera_sources:
@@ -99,6 +86,15 @@ def generate_frames():
     consecutive_errors = 0
     max_consecutive_errors = 5
     
+    # Frame skipping for performance
+    frame_count = 0
+    last_hand_data = None
+    
+    # FPS counter
+    fps_start_time = time.time()
+    fps_frame_count = 0
+    fps = 0
+    
     while True:
         try:
             # Check if camera source has changed
@@ -141,64 +137,84 @@ def generate_frames():
             else:
                 # Reset error counter on successful frame
                 consecutive_errors = 0
+                frame_count += 1
                 
                 frame = cv2.flip(frame, 1)
                 
-                # Process frame with gesture detection
-                frame, hand_data, multi_hand_landmarks, multi_handedness = process_frame_for_gestures(frame)
+                # Enhance ESP32-CAM image quality (subtle enhancement)
+                if current_source == "ESP32-CAM":
+                    # Slight brightness and contrast adjustment
+                    frame = cv2.convertScaleAbs(frame, alpha=1.1, beta=10)  # Reduced from 1.3 and 30
+                    # Enhance colors with LAB color space
+                    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+                    l, a, b = cv2.split(lab)
+                    # Apply CLAHE to L channel for better contrast (reduced clip limit)
+                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))  # Reduced from 3.0
+                    l = clahe.apply(l)
+                    lab = cv2.merge([l, a, b])
+                    frame = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+                    # Slight saturation enhancement
+                    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                    h, s, v = cv2.split(hsv)
+                    s = cv2.multiply(s, 1.1)  # Reduced from 1.2
+                    s = np.clip(s, 0, 255).astype(np.uint8)
+                    hsv = cv2.merge([h, s, v])
+                    frame = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+                
+                # Get performance settings
+                skip_frames = settings.get("skip_frames", 1)
+                processing_scale = settings.get("processing_scale", 0.5)
+                
+                # Only process gesture detection on certain frames for performance
+                if settings.get("gesture_detection_enabled", True) and (frame_count % skip_frames == 0):
+                    # Downscale frame for faster processing
+                    height, width = frame.shape[:2]
+                    small_frame = cv2.resize(frame, (int(width * processing_scale), int(height * processing_scale)))
+                    
+                    # Process the smaller frame
+                    small_frame, hand_data, multi_hand_landmarks, multi_handedness = process_frame_for_gestures(small_frame)
+                    
+                    # Scale landmarks back to original size if detected
+                    if hand_data:
+                        scale_factor = 1.0 / processing_scale
+                        hand_data['landmarks'] = [(int(x * scale_factor), int(y * scale_factor)) 
+                                                  for x, y in hand_data['landmarks']]
+                        last_hand_data = hand_data
+                    
+                    # Draw on full-size frame for display
+                    if last_hand_data and settings.get("show_landmarks", True):
+                        # Draw landmarks on full frame
+                        for landmark in last_hand_data['landmarks']:
+                            cv2.circle(frame, landmark, 5, (0, 255, 0), -1)
+                else:
+                    # Use last detected hand data for gesture control
+                    hand_data = last_hand_data
                 
                 if hand_data:
-                    landmarks = hand_data['landmarks']
-                    fingers = hand_data['fingers']
-                    finger_angle = hand_data['finger_angle']
-                    hand_angle = hand_data['hand_angle']
                     total_fingers = hand_data['total_fingers']
                     
-                    # Device control for LEDs and main motor
-                    control_led_devices(fingers, prev_fingers)
-                    prev_fingers = fingers.copy()
+                    # New gesture-based control system
+                    control_devices_by_gesture(total_fingers)
                     
-                    # Bulb voltage control based on total fingers raised
-                    control_bulb_voltage(total_fingers)
-                    
-                    # Finger rotation for finger motor
-                    if finger_angle is not None:
-                        finger_angle_buffer.append(finger_angle)
-                        avg_finger_angle = sum(finger_angle_buffer) / len(finger_angle_buffer)
-                        smooth_finger_angle = prev_finger_angle * smoothing_factor + avg_finger_angle * (1 - smoothing_factor)
-                        prev_finger_angle = smooth_finger_angle
-                        
-                        motor_value = min(100, max(0, smooth_finger_angle * 100 / 120))
-                        control_finger_motor(motor_value)
-                    
-                    # Wrist rotation for hand motor
-                    if hand_angle is not None:
-                        hand_angle_buffer.append(hand_angle)
-                        avg_hand_angle = sum(hand_angle_buffer) / len(hand_angle_buffer)
-                        smooth_hand_angle = prev_hand_angle * smoothing_factor + avg_hand_angle * (1 - smoothing_factor)
-                        prev_hand_angle = smooth_hand_angle
-                        
-                        motor_value = min(100, max(0, smooth_hand_angle * 100 / 180))
-                        control_hand_motor(motor_value)
-                    
-                    # Draw rotation indicators if enabled
-                    if (settings.get("show_finger_rotation_indicator", True) or 
-                        settings.get("show_hand_rotation_indicator", True)):
-                        draw_rotation_indicators(frame, landmarks, 
-                                                motor_values["finger_motor"],
-                                                motor_values["hand_motor"])
-                    
-                    # Draw bulb indicator if enabled
-                    if settings.get("show_bulb_indicator", True) and settings.get("detect_bulb", True):
-                        draw_bulb_indicator(frame, landmarks, motor_values["bulb_voltage"])
-                
-                else:
-                    # No hand detected - reset bulb voltage and fingers
-                    reset_bulb_when_no_hand()
-                    prev_fingers = [0, 0, 0, 0, 0]
+                    # Draw finger count on frame
+                    cv2.putText(frame, f"Fingers: {total_fingers}", (10, 70), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
             
-            # Convert frame to JPEG
-            ret, buffer = cv2.imencode('.jpg', frame)
+            # Calculate and display FPS
+            fps_frame_count += 1
+            if fps_frame_count >= 30:  # Update FPS every 30 frames
+                fps_end_time = time.time()
+                fps = fps_frame_count / (fps_end_time - fps_start_time)
+                fps_start_time = fps_end_time
+                fps_frame_count = 0
+            
+            # Draw FPS on frame
+            cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
+            # Convert frame to JPEG with quality setting for faster encoding
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]  # Lower quality = faster
+            ret, buffer = cv2.imencode('.jpg', frame, encode_param)
             if not ret:
                 print("Error encoding frame to JPEG")
                 continue

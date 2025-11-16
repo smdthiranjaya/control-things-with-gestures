@@ -4,7 +4,7 @@ WebSocket event handlers
 import time
 import threading
 from flask_socketio import emit
-from config import device_status, motor_values
+from backend.config import device_status
 
 def register_socketio_handlers(socketio):
     """Register all SocketIO event handlers"""
@@ -13,7 +13,6 @@ def register_socketio_handlers(socketio):
     def handle_connect():
         print('Client connected')
         emit('device_status', device_status)
-        emit('motor_values', motor_values)
 
     @socketio.on('disconnect')
     def handle_disconnect():
@@ -23,7 +22,6 @@ def send_updates(socketio):
     """Send periodic updates to connected clients"""
     while True:
         socketio.emit('device_status', device_status)
-        socketio.emit('motor_values', motor_values)
         time.sleep(0.5)
 
 def start_update_thread(socketio):

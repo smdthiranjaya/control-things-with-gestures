@@ -6,49 +6,45 @@ const char* password = "PASS";
 
 ESP8266WebServer server(80);
 
-// Digital output pins
-const int led1Pin = D1;      // GPIO 5
-const int led2Pin = D2;      // GPIO 4
-const int led3Pin = D3;      // GPIO 0
-const int motorPin = D4;     // GPIO 2
+// Pin Configuration
+const int led1Pin = D1;
+const int led2Pin = D2;
+const int led3Pin = D3;
+const int motorPin = D4;
+const int fingerMotorPin = D5;
+const int handMotorPin = D6;
+const int bulbPin = D7;
 
-// PWM output pins for the servo/motors
-const int fingerMotorPin = D5; // GPIO 14
-const int handMotorPin = D6;   // GPIO 12
-const int bulbPin = D7;        // GPIO 13 
+// PWM Configuration
+const int pwmFrequency = 1000;
+const int pwmRange = 1023;
 
-// PWM values
-const int pwmFrequency = 1000;  // 1 kHz
-const int pwmRange = 1023;      // 10-bit resolution (0-1023)
+// State Tracking
+bool led1State = false;
+bool led2State = false;
 
 void setup() {
   Serial.begin(115200);
   
-  // Setup digital pins
   pinMode(led1Pin, OUTPUT);
   pinMode(led2Pin, OUTPUT);
   pinMode(led3Pin, OUTPUT);
   pinMode(motorPin, OUTPUT);
+  pinMode(fingerMotorPin, OUTPUT);
+  pinMode(handMotorPin, OUTPUT);
+  pinMode(bulbPin, OUTPUT);
   
-  // Set initial state to OFF
   digitalWrite(led1Pin, LOW);
   digitalWrite(led2Pin, LOW);
   digitalWrite(led3Pin, LOW);
   digitalWrite(motorPin, LOW);
   
-  // Setup PWM pins for motors and bulb
-  pinMode(fingerMotorPin, OUTPUT);
-  pinMode(handMotorPin, OUTPUT);
-  pinMode(bulbPin, OUTPUT); 
-  analogWriteRange(pwmRange);  
+  analogWriteRange(pwmRange);
   analogWriteFreq(pwmFrequency);
-  
-  // Set initial PWM values to 0
   analogWrite(fingerMotorPin, 0);
   analogWrite(handMotorPin, 0);
-  analogWrite(bulbPin, 0);  
+  analogWrite(bulbPin, 0);
   
-  // Connect to WiFi
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
@@ -60,12 +56,23 @@ void setup() {
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
   
-  // Status endpoint for connection testing
+  // API Endpoints
   server.on("/status", HTTP_GET, [](){
     server.send(200, "text/plain", "ESP8266 OK");
   });
   
-  // Routes for LEDs and main motor (ON/OFF)
+  server.on("/led1_toggle", HTTP_GET, [](){
+    led1State = !led1State;
+    digitalWrite(led1Pin, led1State ? HIGH : LOW);
+    server.send(200, "text/plain", led1State ? "LED1 ON" : "LED1 OFF");
+  });
+  
+  server.on("/led2_toggle", HTTP_GET, [](){
+    led2State = !led2State;
+    digitalWrite(led2Pin, led2State ? HIGH : LOW);
+    server.send(200, "text/plain", led2State ? "LED2 ON" : "LED2 OFF");
+  });
+  
   server.on("/led1/on", HTTP_GET, [](){
     digitalWrite(led1Pin, HIGH);
     server.send(200, "text/plain", "LED1 ON");
@@ -187,7 +194,6 @@ void setup() {
   server.onNotFound([](){
     String path = server.uri();
     
-    // Handle finger_motor/set/value pattern
     if (path.startsWith("/finger_motor/set/")) {
       String valueStr = path.substring(18);
       int value = valueStr.toInt();
@@ -198,7 +204,6 @@ void setup() {
       return;
     }
     
-    // Handle hand_motor/set/value pattern
     if (path.startsWith("/hand_motor/set/")) {
       String valueStr = path.substring(16);
       int value = valueStr.toInt();
@@ -209,7 +214,6 @@ void setup() {
       return;
     }
     
-    // Handle bulb/set/value pattern
     if (path.startsWith("/bulb/set/")) {
       String valueStr = path.substring(10);
       int value = valueStr.toInt();
@@ -223,7 +227,6 @@ void setup() {
     server.send(404, "text/plain", "Not Found");
   });
   
-  // Start the server
   server.begin();
   Serial.println("HTTP server started");
 }

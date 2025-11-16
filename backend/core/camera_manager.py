@@ -1,20 +1,15 @@
-"""
-Camera detection and management
-"""
 import cv2
 import time
 import threading
-from config import (
+from backend.config import (
     camera_sources, camera_detection_lock, camera_detection_in_progress,
     camera_detection_completed, settings, cap
 )
 
 def get_camera_sources():
-    """Find and return available camera sources"""
     esp32_url = settings.get("esp32_cam_url", "http://10.168.182.148:81/stream")
     sources = {"ESP32-CAM": esp32_url}
     
-    # Only check cameras we know exist (0, 1, 2)
     for index in [0, 1, 2]:
         try:
             sources[f"Computer Cam {index}"] = index
@@ -25,18 +20,15 @@ def get_camera_sources():
     return sources
 
 def detect_cameras():
-    """Detect available cameras with thread safety"""
     global camera_sources, camera_detection_completed, camera_detection_in_progress
     
     if not settings.get("auto_detect_cameras", True):
         return camera_sources
     
-    # If detection is already in progress or completed, return current sources
     if camera_detection_in_progress or camera_detection_completed:
         print("Returning cached camera sources")
         return camera_sources
     
-    # Otherwise, do detection with lock
     with camera_detection_lock:
         if not camera_detection_completed: 
             try:
@@ -56,7 +48,6 @@ def detect_cameras():
             return camera_sources
 
 def initialize_cameras_background():
-    """Initialize cameras in background after server starts"""
     global camera_sources, camera_detection_completed
     
     if camera_detection_completed:
@@ -78,28 +69,29 @@ def initialize_cameras_background():
         traceback.print_exc()
 
 def open_camera(source, current_source):
-    """Open camera with proper error handling"""
     global cap
     
     try:
-        # Handle different types of camera sources
         if current_source == "ESP32-CAM":
             cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
             cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(cv2.CAP_PROP_BRIGHTNESS, 0.5)
+            cap.set(cv2.CAP_PROP_CONTRAST, 0.5)
+            cap.set(cv2.CAP_PROP_SATURATION, 0.55)
         else:
-            # Try DirectShow backend first for Windows USB cameras
             cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
             if not cap.isOpened():
-                # Fallback to default backend
                 cap = cv2.VideoCapture(source)
             
             if isinstance(source, int) and cap.isOpened():
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                cap.set(cv2.CAP_PROP_FPS, 30)
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         
         if cap is not None and cap.isOpened():
-            # Test if we can actually read a frame
             ret, _ = cap.read()
             if ret:
                 print(f"Camera {current_source} opened successfully")
@@ -119,7 +111,6 @@ def open_camera(source, current_source):
         return False
 
 def release_camera():
-    """Safely release camera resources"""
     global cap
     
     if cap is not None:
@@ -131,11 +122,9 @@ def release_camera():
         cap = None
 
 def is_camera_open():
-    """Check if camera is currently open"""
     return cap is not None and cap.isOpened()
 
 def read_frame():
-    """Read frame from camera with error handling"""
     if cap is None:
         return False, None
     

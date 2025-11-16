@@ -5,13 +5,13 @@ import time
 import cv2
 import requests
 from flask import request, jsonify, send_from_directory, Response
-from config import (
-    settings, last_settings_change, device_status, motor_values, 
+from backend.config import (
+    settings, last_settings_change, device_status,
     camera_sources, cap, get_esp8266_ip
 )
-from camera_manager import detect_cameras
-from device_controller import test_esp8266_connection, set_device_voltage
-from video_processor import generate_frames
+from backend.core.camera_manager import detect_cameras
+from backend.core.device_controller import test_esp8266_connection
+from backend.core.video_processor import generate_frames
 
 def register_routes(app, socketio):
     """Register all API routes with the Flask app"""
@@ -63,9 +63,6 @@ def register_routes(app, socketio):
             response = requests.get(f'http://{esp_ip}/{device}/{action}', timeout=0.5)
             
             device_status[device] = "ON" if action == "on" else "OFF"
-            
-            if device in motor_values:
-                motor_values[device] = 100 if action == "on" else 0
                 
             return jsonify({
                 "success": True,
@@ -81,39 +78,84 @@ def register_routes(app, socketio):
     def get_device_status():
         return jsonify(device_status)
     
-    # Motor voltage control routes
-    @app.route('/api/device/bulb/voltage/<int:voltage>', methods=['POST'])
-    def set_bulb_voltage(voltage):
-        success, message = set_device_voltage("bulb", voltage)
+    # Network settings update and restart
+    @app.route('/api/network/settings', methods=['POST'])
+    def update_network_settings():
+        """Update network settings and trigger backend restart"""
+        import os
+        import sys
+        import re
         
-        if success:
-            socketio.emit('device_status', device_status)
-            socketio.emit('motor_values', motor_values)
+        data = request.json
+        esp32_url = data.get('esp32_cam_url')
+        esp8266_ip = data.get('esp8266_ip')
+        
+        config_path = os.path.join(os.path.dirname(__file__), '..', 'config.py')
+        
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_content = f.read()
+            
+            # Update ESP32-CAM URL in ALL locations
+            if esp32_url:
+                config_content = re.sub(
+                    r'ESP32_CAM_URL\s*=\s*["\'].*?["\']',
+                    f'ESP32_CAM_URL = "{esp32_url}"',
+                    config_content
+                )
+                config_content = re.sub(
+                    r'camera_sources\s*=\s*\{["\']ESP32-CAM["\']\s*:\s*["\'].*?["\']\}',
+                    f'camera_sources = {{"ESP32-CAM": "{esp32_url}"}}',
+                    config_content
+                )
+                config_content = re.sub(
+                    r'["\']esp32_cam_url["\']\s*:\s*["\'].*?["\']',
+                    f'"esp32_cam_url": "{esp32_url}"',
+                    config_content
+                )
+                settings['esp32_cam_url'] = esp32_url
+                camera_sources['ESP32-CAM'] = esp32_url
+            
+            # Update ESP8266 IP in ALL locations
+            if esp8266_ip:
+                config_content = re.sub(
+                    r'ESP8266_IP\s*=\s*["\'].*?["\']',
+                    f'ESP8266_IP = "{esp8266_ip}"',
+                    config_content
+                )
+                config_content = re.sub(
+                    r'["\']esp8266_ip["\']\s*:\s*["\'].*?["\']',
+                    f'"esp8266_ip": "{esp8266_ip}"',
+                    config_content
+                )
+                settings['esp8266_ip'] = esp8266_ip
+            
+            with open(config_path, 'w', encoding='utf-8') as f:
+                f.write(config_content)
+            
+            print(f"[CONFIG] Updated ALL network settings locations - ESP32: {esp32_url}, ESP8266: {esp8266_ip}")
+            
+            # Schedule backend restart
+            def restart_backend():
+                time.sleep(1)  
+                print("[RESTART] Restarting backend with new network settings...")
+                os._exit(42)
+            
+            import threading
+            threading.Thread(target=restart_backend, daemon=True).start()
+            
             return jsonify({
                 "success": True,
-                "voltage": voltage,
-                "status": device_status["bulb"]
+                "message": "Network settings saved. Backend restarting...",
+                "restarting": True
             })
-        else:
-            return jsonify({"success": False, "message": message})
-    
-    @app.route('/api/motor/<motor>/voltage/<int:voltage>', methods=['POST'])
-    def set_motor_voltage(motor, voltage):
-        if motor not in ["finger_motor", "hand_motor"]:
-            return jsonify({"success": False, "message": "Invalid motor"})
-        
-        success, message = set_device_voltage(motor, voltage)
-        
-        if success:
-            socketio.emit('device_status', device_status)
-            socketio.emit('motor_values', motor_values)
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to update network settings: {e}")
             return jsonify({
-                "success": True,
-                "voltage": voltage,
-                "status": device_status[motor]
+                "success": False,
+                "message": f"Failed to update settings: {str(e)}"
             })
-        else:
-            return jsonify({"success": False, "message": message})
     
     # Connection testing routes
     @app.route('/api/test/connection', methods=['POST'])
