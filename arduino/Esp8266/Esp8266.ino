@@ -1,23 +1,23 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <EEPROM.h>
 
-const char* ssid = "SLT";
-const char* password = "PASS";
+// Default WiFi credentials (change via web interface)
+String ssid = "SLT";
+String password = "PASS";
 
 ESP8266WebServer server(80);
 
-// Pin Configuration
-const int led1Pin = D1;
-const int led2Pin = D2;
-const int led3Pin = D3;
-const int motorPin = D4;
-const int fingerMotorPin = D5;
-const int handMotorPin = D6;
-const int bulbPin = D7;
+// EEPROM addresses
+#define EEPROM_SIZE 512
+#define SSID_ADDR 0
+#define PASS_ADDR 100
 
-// PWM Configuration
-const int pwmFrequency = 1000;
-const int pwmRange = 1023;
+// Pin Configuration for Transistor Control
+const int led1Pin = D1;      // Red LED (GPIO5) - Direct with 220Ω resistor
+const int led2Pin = D2;      // Green LED (GPIO4) - Direct with 220Ω resistor
+const int buzzerPin = D5;    // Buzzer (GPIO14) - Through transistor with 1KΩ base resistor
+const int motorPin = D6;     // Motor (GPIO12) - Through transistor with 1KΩ base resistor
 
 // State Tracking
 bool led1State = false;
@@ -25,36 +25,44 @@ bool led2State = false;
 
 void setup() {
   Serial.begin(115200);
+  EEPROM.begin(EEPROM_SIZE);
   
   pinMode(led1Pin, OUTPUT);
   pinMode(led2Pin, OUTPUT);
-  pinMode(led3Pin, OUTPUT);
+  pinMode(buzzerPin, OUTPUT);
   pinMode(motorPin, OUTPUT);
-  pinMode(fingerMotorPin, OUTPUT);
-  pinMode(handMotorPin, OUTPUT);
-  pinMode(bulbPin, OUTPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
   
   digitalWrite(led1Pin, LOW);
   digitalWrite(led2Pin, LOW);
-  digitalWrite(led3Pin, LOW);
+  digitalWrite(buzzerPin, LOW);
   digitalWrite(motorPin, LOW);
   
-  analogWriteRange(pwmRange);
-  analogWriteFreq(pwmFrequency);
-  analogWrite(fingerMotorPin, 0);
-  analogWrite(handMotorPin, 0);
-  analogWrite(bulbPin, 0);
+  // Load WiFi credentials from EEPROM
+  loadWiFiCredentials();
   
-  WiFi.begin(ssid, password);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
+  // Try to connect to WiFi
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid.c_str(), password.c_str());
+  
+  Serial.println("\nConnecting to WiFi: " + ssid);
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
     Serial.print(".");
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); // Blink during connect
+    attempts++;
   }
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi connected!");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+    digitalWrite(LED_BUILTIN, LOW); // LED off when connected
+  } else {
+    Serial.println("\nWiFi connection failed! Starting AP mode...");
+    startAPMode();
+  }
   
   // API Endpoints
   server.on("/status", HTTP_GET, [](){
@@ -93,142 +101,117 @@ void setup() {
     server.send(200, "text/plain", "LED2 OFF");
   });
   
-  server.on("/led3/on", HTTP_GET, [](){
-    digitalWrite(led3Pin, HIGH);
-    server.send(200, "text/plain", "LED3 ON");
+  server.on("/buzzer/on", HTTP_GET, [](){
+    digitalWrite(buzzerPin, HIGH);
+    server.send(200, "text/plain", "Buzzer ON");
   });
   
-  server.on("/led3/off", HTTP_GET, [](){
-    digitalWrite(led3Pin, LOW);
-    server.send(200, "text/plain", "LED3 OFF");
+  server.on("/buzzer/off", HTTP_GET, [](){
+    digitalWrite(buzzerPin, LOW);
+    server.send(200, "text/plain", "Buzzer OFF");
   });
   
   server.on("/motor/on", HTTP_GET, [](){
-    digitalWrite(motorPin, HIGH);
+    digitalWrite(motorPin, HIGH);  // Turn on transistor
     server.send(200, "text/plain", "Motor ON");
   });
   
   server.on("/motor/off", HTTP_GET, [](){
-    digitalWrite(motorPin, LOW);
+    digitalWrite(motorPin, LOW);  // Turn off transistor
     server.send(200, "text/plain", "Motor OFF");
   });
   
-  server.on("/finger_motor/on", HTTP_GET, [](){
-    analogWrite(fingerMotorPin, pwmRange);
-    server.send(200, "text/plain", "Finger Motor ON");
+  // WiFi info endpoint
+  server.on("/wifi/info", HTTP_GET, [](){
+    String json = "{";
+    json += "\"ssid\":\"" + WiFi.SSID() + "\",";
+    json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
+    json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+    json += "\"mac\":\"" + WiFi.macAddress() + "\"";
+    json += "}";
+    server.send(200, "application/json", json);
   });
   
-  server.on("/finger_motor/off", HTTP_GET, [](){
-    analogWrite(fingerMotorPin, 0);
-    server.send(200, "text/plain", "Finger Motor OFF");
+  // WiFi scan endpoint
+  server.on("/wifi/scan", HTTP_GET, [](){
+    int n = WiFi.scanNetworks();
+    String json = "[";
+    for (int i = 0; i < n; i++) {
+      if (i > 0) json += ",";
+      json += "{\"ssid\":\"" + WiFi.SSID(i) + "\",";
+      json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
+      json += "\"secure\":" + String(WiFi.encryptionType(i) != ENC_TYPE_NONE) + "}";
+    }
+    json += "]";
+    server.send(200, "application/json", json);
   });
   
-  server.on("/finger_motor/set", HTTP_GET, [](){
-    String path = server.uri();
-    int lastSlash = path.lastIndexOf('/');
-    if (lastSlash != -1 && lastSlash < path.length() - 1) {
-      String valueStr = path.substring(lastSlash + 1);
-      int value = valueStr.toInt();
-      value = constrain(value, 0, 100);
-      int pwmValue = map(value, 0, 100, 0, pwmRange);
-      analogWrite(fingerMotorPin, pwmValue);
-      server.send(200, "text/plain", "Finger Motor: " + String(value) + "%");
+  // WiFi configure endpoint
+  server.on("/wifi/configure", HTTP_POST, [](){
+    if (server.hasArg("ssid") && server.hasArg("password")) {
+      String newSSID = server.arg("ssid");
+      String newPassword = server.arg("password");
+      
+      saveWiFiCredentials(newSSID, newPassword);
+      
+      server.send(200, "text/plain", "WiFi configured! Restarting...");
+      delay(1000);
+      ESP.restart();
     } else {
-      server.send(400, "text/plain", "Invalid request");
+      server.send(400, "text/plain", "Missing ssid or password");
     }
-  });
-  
-  server.on("/hand_motor/on", HTTP_GET, [](){
-    analogWrite(handMotorPin, pwmRange); 
-    server.send(200, "text/plain", "Hand Motor ON");
-  });
-  
-  server.on("/hand_motor/off", HTTP_GET, [](){
-    analogWrite(handMotorPin, 0);
-    server.send(200, "text/plain", "Hand Motor OFF");
-  });
-  
-  // Update the URL pattern for hand motor with set command
-  server.on("/hand_motor/set", HTTP_GET, [](){
-    String path = server.uri();
-    int lastSlash = path.lastIndexOf('/');
-    if (lastSlash != -1 && lastSlash < path.length() - 1) {
-      String valueStr = path.substring(lastSlash + 1);
-      int value = valueStr.toInt();
-      value = constrain(value, 0, 100);
-      int pwmValue = map(value, 0, 100, 0, pwmRange);
-      analogWrite(handMotorPin, pwmValue);
-      server.send(200, "text/plain", "Hand Motor: " + String(value) + "%");
-    } else {
-      server.send(400, "text/plain", "Invalid request");
-    }
-  });
-  
-  // Routes for bulb control
-  server.on("/bulb/on", HTTP_GET, [](){
-    analogWrite(bulbPin, pwmRange);
-    server.send(200, "text/plain", "Bulb ON");
-  });
-  
-  server.on("/bulb/off", HTTP_GET, [](){
-    analogWrite(bulbPin, 0);
-    server.send(200, "text/plain", "Bulb OFF");
-  });
-  
-  server.on("/bulb/set", HTTP_GET, [](){
-    String path = server.uri();
-    int lastSlash = path.lastIndexOf('/');
-    if (lastSlash != -1 && lastSlash < path.length() - 1) {
-      String valueStr = path.substring(lastSlash + 1);
-      int value = valueStr.toInt();
-      value = constrain(value, 0, 100);
-      int pwmValue = map(value, 0, 100, 0, pwmRange);
-      analogWrite(bulbPin, pwmValue);
-      server.send(200, "text/plain", "Bulb: " + String(value) + "%");
-    } else {
-      server.send(400, "text/plain", "Invalid request");
-    }
-  });
-  
-  // Register handler for URLs with parameters
-  server.onNotFound([](){
-    String path = server.uri();
-    
-    if (path.startsWith("/finger_motor/set/")) {
-      String valueStr = path.substring(18);
-      int value = valueStr.toInt();
-      value = constrain(value, 0, 100);
-      int pwmValue = map(value, 0, 100, 0, pwmRange);
-      analogWrite(fingerMotorPin, pwmValue);
-      server.send(200, "text/plain", "Finger Motor: " + String(value) + "%");
-      return;
-    }
-    
-    if (path.startsWith("/hand_motor/set/")) {
-      String valueStr = path.substring(16);
-      int value = valueStr.toInt();
-      value = constrain(value, 0, 100);
-      int pwmValue = map(value, 0, 100, 0, pwmRange);
-      analogWrite(handMotorPin, pwmValue);
-      server.send(200, "text/plain", "Hand Motor: " + String(value) + "%");
-      return;
-    }
-    
-    if (path.startsWith("/bulb/set/")) {
-      String valueStr = path.substring(10);
-      int value = valueStr.toInt();
-      value = constrain(value, 0, 100);
-      int pwmValue = map(value, 0, 100, 0, pwmRange);
-      analogWrite(bulbPin, pwmValue);
-      server.send(200, "text/plain", "Bulb: " + String(value) + "%");
-      return;
-    }
-    
-    server.send(404, "text/plain", "Not Found");
   });
   
   server.begin();
   Serial.println("HTTP server started");
+}
+
+void startAPMode() {
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP("ESP8266-Setup", "12345678");
+  Serial.println("AP Mode started");
+  Serial.print("AP IP: ");
+  Serial.println(WiFi.softAPIP());
+  digitalWrite(LED_BUILTIN, HIGH); // LED on in AP mode
+}
+
+void loadWiFiCredentials() {
+  char ssidBuf[32];
+  char passBuf[64];
+  
+  for (int i = 0; i < 32; i++) {
+    ssidBuf[i] = EEPROM.read(SSID_ADDR + i);
+    if (ssidBuf[i] == 0) break;
+  }
+  for (int i = 0; i < 64; i++) {
+    passBuf[i] = EEPROM.read(PASS_ADDR + i);
+    if (passBuf[i] == 0) break;
+  }
+  
+  if (ssidBuf[0] != 0 && ssidBuf[0] != 255) {
+    ssid = String(ssidBuf);
+    password = String(passBuf);
+    Serial.println("Loaded WiFi from EEPROM: " + ssid);
+  }
+}
+
+void saveWiFiCredentials(String newSSID, String newPassword) {
+  for (int i = 0; i < 32; i++) {
+    if (i < newSSID.length()) {
+      EEPROM.write(SSID_ADDR + i, newSSID[i]);
+    } else {
+      EEPROM.write(SSID_ADDR + i, 0);
+    }
+  }
+  for (int i = 0; i < 64; i++) {
+    if (i < newPassword.length()) {
+      EEPROM.write(PASS_ADDR + i, newPassword[i]);
+    } else {
+      EEPROM.write(PASS_ADDR + i, 0);
+    }
+  }
+  EEPROM.commit();
+  Serial.println("WiFi credentials saved to EEPROM");
 }
 
 void loop() {

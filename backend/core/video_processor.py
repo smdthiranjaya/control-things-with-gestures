@@ -141,25 +141,10 @@ def generate_frames():
                 
                 frame = cv2.flip(frame, 1)
                 
-                # Enhance ESP32-CAM image quality (subtle enhancement)
+                # Light enhancement for ESP32-CAM (minimal processing)
                 if current_source == "ESP32-CAM":
-                    # Slight brightness and contrast adjustment
-                    frame = cv2.convertScaleAbs(frame, alpha=1.1, beta=10)  # Reduced from 1.3 and 30
-                    # Enhance colors with LAB color space
-                    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
-                    l, a, b = cv2.split(lab)
-                    # Apply CLAHE to L channel for better contrast (reduced clip limit)
-                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))  # Reduced from 3.0
-                    l = clahe.apply(l)
-                    lab = cv2.merge([l, a, b])
-                    frame = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-                    # Slight saturation enhancement
-                    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-                    h, s, v = cv2.split(hsv)
-                    s = cv2.multiply(s, 1.1)  # Reduced from 1.2
-                    s = np.clip(s, 0, 255).astype(np.uint8)
-                    hsv = cv2.merge([h, s, v])
-                    frame = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+                    # Only basic brightness/contrast adjustment
+                    frame = cv2.convertScaleAbs(frame, alpha=1.05, beta=5)
                 
                 # Get performance settings
                 skip_frames = settings.get("skip_frames", 1)
@@ -212,8 +197,8 @@ def generate_frames():
             cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             
-            # Convert frame to JPEG with quality setting for faster encoding
-            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]  # Lower quality = faster
+            # Convert frame to JPEG with balanced quality
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 85]
             ret, buffer = cv2.imencode('.jpg', frame, encode_param)
             if not ret:
                 print("Error encoding frame to JPEG")
