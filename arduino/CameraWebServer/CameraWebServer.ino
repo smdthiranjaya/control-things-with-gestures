@@ -1,5 +1,13 @@
 #include "esp_camera.h"
 #include <WiFi.h>
+#include <EEPROM.h>
+#include <ESPmDNS.h>
+#include <WebServer.h>
+
+// EEPROM addresses for WiFi credentials
+#define EEPROM_SIZE 512
+#define SSID_ADDR 0
+#define PASS_ADDR 100
 
 //
 // WARNING!!! PSRAM IC required for UXGA resolution and high JPEG quality
@@ -34,13 +42,21 @@
 #include "camera_pins.h"
 
 // ===========================
-// Enter your WiFi credentials
+// WiFi credentials (loaded from EEPROM or defaults)
 // ===========================
-const char *ssid = "SLT";
-const char *password = "PASS";
+String ssid = "SLT";
+String password = "PASS";
+
+// AP mode credentials (if WiFi connection fails)
+const char* ap_ssid = "ESP32CAM-Setup";
+const char* ap_password = "12345678";
 
 void startCameraServer();
 void setupLedFlash(int pin);
+void setupWiFiEndpoints();
+void loadWiFiCredentials();
+void saveWiFiCredentials(String newSSID, String newPassword);
+void startAPMode();
 
 void setup() {
   Serial.begin(115200);
@@ -133,24 +149,139 @@ void setup() {
   setupLedFlash(LED_GPIO_NUM);
 #endif
 
-  WiFi.begin(ssid, password);
+  // Initialize EEPROM and load WiFi credentials
+  EEPROM.begin(EEPROM_SIZE);
+  loadWiFiCredentials();
+  
+  Serial.println("\nConnecting to WiFi...");
+  Serial.print("SSID: ");
+  Serial.println(ssid);
+  
   WiFi.setSleep(false);
-
-  while (WiFi.status() != WL_CONNECTED) {
+  WiFi.begin(ssid.c_str(), password.c_str());
+  
+  // Try to connect for 20 seconds
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 40) {
     delay(500);
     Serial.print(".");
+    attempts++;
   }
-  Serial.println("");
-  Serial.println("WiFi connected");
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("");
+    Serial.println("WiFi connected!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("Stream URL: http://");
+    Serial.print(WiFi.localIP());
+    Serial.println("/stream");
+    
+    // Setup mDNS for easy discovery
+    if (MDNS.begin("esp32cam")) {
+      Serial.println("mDNS started: http://esp32cam.local");
+      Serial.println("Stream URL: http://esp32cam.local/stream");
+      MDNS.addService("http", "tcp", 80);
+    }
+  } else {
+    Serial.println("");
+    Serial.println("WiFi connection failed! Starting AP mode...");
+    startAPMode();
+  }
 
   startCameraServer();
+  setupWiFiEndpoints();
 
-  Serial.print("Camera Ready! Use 'http://");
-  Serial.print(WiFi.localIP());
-  Serial.println("' to connect");
+  Serial.println("\n=================================");
+  Serial.println("ESP32-CAM Ready!");
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("Camera URL: http://");
+    Serial.println(WiFi.localIP());
+    Serial.print("Stream URL: http://");
+    Serial.print(WiFi.localIP());
+    Serial.println("/stream");
+    Serial.println("mDNS: http://esp32cam.local");
+  } else {
+    Serial.println("AP Mode Active");
+    Serial.print("Connect to: ");
+    Serial.println(ap_ssid);
+    Serial.print("Password: ");
+    Serial.println(ap_password);
+    Serial.print("Configure at: http://");
+    Serial.println(WiFi.softAPIP());
+  }
+  Serial.println("=================================");
 }
 
 void loop() {
   // Do nothing. Everything is done in another task by the web server
   delay(10000);
+}
+
+// ===========================
+// WiFi Management Functions
+// ===========================
+
+void loadWiFiCredentials() {
+  char ssidBuf[32];
+  char passBuf[64];
+  
+  for (int i = 0; i < 32; i++) {
+    ssidBuf[i] = EEPROM.read(SSID_ADDR + i);
+    if (ssidBuf[i] == 0) break;
+  }
+  ssidBuf[31] = 0;
+  
+  for (int i = 0; i < 64; i++) {
+    passBuf[i] = EEPROM.read(PASS_ADDR + i);
+    if (passBuf[i] == 0) break;
+  }
+  passBuf[63] = 0;
+  
+  // Only use EEPROM values if they look valid
+  if (ssidBuf[0] != 0 && ssidBuf[0] != 255) {
+    ssid = String(ssidBuf);
+    password = String(passBuf);
+    Serial.println("Loaded WiFi credentials from EEPROM");
+  } else {
+    Serial.println("No saved WiFi credentials, using defaults");
+  }
+}
+
+void saveWiFiCredentials(String newSSID, String newPassword) {
+  Serial.println("Saving WiFi credentials to EEPROM...");
+  
+  // Write SSID
+  for (int i = 0; i < newSSID.length(); i++) {
+    EEPROM.write(SSID_ADDR + i, newSSID[i]);
+  }
+  EEPROM.write(SSID_ADDR + newSSID.length(), 0);
+  
+  // Write Password
+  for (int i = 0; i < newPassword.length(); i++) {
+    EEPROM.write(PASS_ADDR + i, newPassword[i]);
+  }
+  EEPROM.write(PASS_ADDR + newPassword.length(), 0);
+  
+  EEPROM.commit();
+  Serial.println("WiFi credentials saved!");
+}
+
+void startAPMode() {
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(ap_ssid, ap_password);
+  
+  Serial.println("AP Mode Started");
+  Serial.print("AP SSID: ");
+  Serial.println(ap_ssid);
+  Serial.print("AP Password: ");
+  Serial.println(ap_password);
+  Serial.print("AP IP Address: ");
+  Serial.println(WiFi.softAPIP());
+}
+
+void setupWiFiEndpoints() {
+  // This requires access to the WebServer from app_httpd.cpp
+  // We'll add endpoints there instead
+  Serial.println("WiFi endpoints will be added to camera server");
 }

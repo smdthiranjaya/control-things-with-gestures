@@ -398,36 +398,6 @@
                   Save Network Settings
                 </button>
               </div>
-
-              <div class="mt-6">
-                <button
-                  @click="refreshESP8266Info"
-                  :class="['w-full font-medium py-2 px-4 rounded-md flex items-center justify-center', darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-gray-200 hover:bg-gray-300 text-gray-900']"
-                >
-                  <span class="material-icons mr-2">refresh</span>
-                  Refresh ESP8266 Info
-                </button>
-              </div>
-
-              <div v-if="esp8266Info" class="mt-4 p-4 rounded-lg" :class="darkMode ? 'bg-gray-700' : 'bg-gray-100'">
-                <h4 :class="['font-medium mb-2', darkMode ? 'text-gray-200' : 'text-gray-800']">
-                  ESP8266 Current Status
-                </h4>
-                <div class="space-y-1 text-sm">
-                  <p :class="darkMode ? 'text-gray-300' : 'text-gray-600'">
-                    <strong>Connected SSID:</strong> {{ esp8266Info.ssid }}
-                  </p>
-                  <p :class="darkMode ? 'text-gray-300' : 'text-gray-600'">
-                    <strong>IP Address:</strong> {{ esp8266Info.ip }}
-                  </p>
-                  <p :class="darkMode ? 'text-gray-300' : 'text-gray-600'">
-                    <strong>Signal Strength:</strong> {{ esp8266Info.rssi }} dBm
-                  </p>
-                  <p :class="darkMode ? 'text-gray-300' : 'text-gray-600'">
-                    <strong>MAC Address:</strong> {{ esp8266Info.mac }}
-                  </p>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -630,7 +600,6 @@
             success: false,
             message: "",
           });
-          const esp8266Info = ref(null);
           const deviceIcons = {
             led1: "lightbulb",
             led2: "lightbulb",
@@ -733,17 +702,6 @@
           const backendRestarting = ref(false);
 
           // Save network settings and restart backend
-          const refreshESP8266Info = async () => {
-            try {
-              const esp_ip = settings.value.esp8266_ip;
-              const response = await axios.get(`http://${esp_ip}/wifi/info`);
-              esp8266Info.value = response.data;
-            } catch (error) {
-              console.error("Error fetching ESP8266 info:", error);
-              alert("Failed to get ESP8266 info. Check IP address and connection.");
-            }
-          };
-
           const saveNetworkSettings = async () => {
             try {
               backendRestarting.value = true;
@@ -778,7 +736,7 @@
           // Wait for backend to restart and reconnect
           const waitForBackendRestart = async () => {
             let attempts = 0;
-            const maxAttempts = 30; 
+            const maxAttempts = 30;
 
             const checkBackend = async () => {
               try {
@@ -928,16 +886,13 @@
           onMounted(() => {
             initApp();
 
-
             document.body.style.backgroundColor = darkMode.value
               ? "#111827"
               : "#f9fafb";
 
-
-              if (localStorage.getItem("darkMode") === null) {
+            if (localStorage.getItem("darkMode") === null) {
               localStorage.setItem("darkMode", "true");
             }
-
 
             return () => {
               if (socket) {
@@ -945,7 +900,6 @@
               }
             };
           });
-
 
           return {
             loading,

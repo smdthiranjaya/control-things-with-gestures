@@ -152,12 +152,16 @@ def generate_frames():
                 
                 # Only process gesture detection on certain frames for performance
                 if settings.get("gesture_detection_enabled", True) and (frame_count % skip_frames == 0):
+                    process_start = time.time()
+                    
                     # Downscale frame for faster processing
                     height, width = frame.shape[:2]
                     small_frame = cv2.resize(frame, (int(width * processing_scale), int(height * processing_scale)))
                     
                     # Process the smaller frame
+                    detection_start = time.time()
                     small_frame, hand_data, multi_hand_landmarks, multi_handedness = process_frame_for_gestures(small_frame)
+                    detection_time = (time.time() - detection_start) * 1000
                     
                     # Scale landmarks back to original size if detected
                     if hand_data:
@@ -165,6 +169,10 @@ def generate_frames():
                         hand_data['landmarks'] = [(int(x * scale_factor), int(y * scale_factor)) 
                                                   for x, y in hand_data['landmarks']]
                         last_hand_data = hand_data
+                    
+                    process_time = (time.time() - process_start) * 1000
+                    if frame_count % 30 == 0:  # Log every 30 frames to avoid spam
+                        print(f"[FRAME TIMING] Detection: {detection_time:.1f}ms | Total: {process_time:.1f}ms")
                     
                     # Draw on full-size frame for display
                     if last_hand_data and settings.get("show_landmarks", True):
@@ -179,7 +187,12 @@ def generate_frames():
                     total_fingers = hand_data['total_fingers']
                     
                     # New gesture-based control system
+                    control_start = time.time()
                     control_devices_by_gesture(total_fingers)
+                    control_time = (time.time() - control_start) * 1000
+                    
+                    if control_time > 10:  # Only log if control takes more than 10ms
+                        print(f"[CONTROL TIMING] Gesture control: {control_time:.1f}ms")
                     
                     # Draw finger count on frame
                     cv2.putText(frame, f"Fingers: {total_fingers}", (10, 70), 

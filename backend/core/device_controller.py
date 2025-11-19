@@ -1,13 +1,60 @@
 import requests
 import time
+from requests.adapters import HTTPAdapter
 from backend.config import device_status, get_esp8266_ip, settings
+
+# Create persistent HTTP session with keep-alive and aggressive retry
+session = requests.Session()
+session.headers.update({'Connection': 'keep-alive'})
+
+# Configure adapter for faster connection handling
+adapter = HTTPAdapter(
+    pool_connections=1,
+    pool_maxsize=1,
+    max_retries=0,  # No retries - fail fast
+    pool_block=False
+)
+session.mount('http://', adapter)
+
+# Timeout tuple: (connect_timeout, read_timeout) in seconds
+# Use longer timeout for initial connection, but session reuse keeps it fast
+REQUEST_TIMEOUT = (3.0, 0.1)  # 3s to connect (first time), 100ms to read
+
+# Connection warming - establish connection on module load
+def warm_connection():
+    """Pre-establish TCP connection to ESP8266"""
+    try:
+        esp_ip = get_esp8266_ip()
+        session.get(f'http://{esp_ip}/status', timeout=(2.0, 2.0))  # Allow time for initial connection
+        print(f"[CONNECTION] Warmed up connection to {esp_ip}")
+    except Exception as e:
+        print(f"[WARNING] Could not warm connection: {e}")
+
+# Warm connection on import
+try:
+    warm_connection()
+except:
+    pass
 
 # Debouncing
 last_state_change = {}
 debounce_delay = 1.0
 
-# Request delay to prevent WiFi overload
-request_delay = 0.05
+# Keep-alive ping
+last_keepalive = time.time()
+keepalive_interval = 5.0  # Ping every 5 seconds to keep connection alive
+
+def keepalive_ping():
+    """Send periodic ping to keep TCP connection alive"""
+    global last_keepalive
+    current = time.time()
+    if current - last_keepalive > keepalive_interval:
+        try:
+            esp_ip = get_esp8266_ip()
+            session.get(f'http://{esp_ip}/status', timeout=REQUEST_TIMEOUT)
+            last_keepalive = current
+        except:
+            pass  # Ignore errors in background ping
 
 # State confirmation
 state_buffer = {
@@ -22,37 +69,55 @@ last_total_fingers = 0
 
 def control_device_direct(device, action):
     """Control device - motor controls both motor and buzzer together"""
+    start_time = time.time()
+    
     if device not in device_status:
         print(f"Unknown device: {device}")
         return False
     
     esp_ip = get_esp8266_ip()
+    print(f"\n[DEBUG {time.strftime('%H:%M:%S.%f')[:-3]}] Control Request: {device} -> {action}")
         
     try:
         # If controlling motor, control both motor and buzzer together
         if device == "motor":
-            requests.get(f'http://{esp_ip}/buzzer/{action}', timeout=0.3)
-            time.sleep(0.05)
-            requests.get(f'http://{esp_ip}/motor/{action}', timeout=0.3)
+            req1_start = time.time()
+            session.get(f'http://{esp_ip}/buzzer/{action}', timeout=REQUEST_TIMEOUT)
+            req1_time = (time.time() - req1_start) * 1000
+            print(f"  ├─ Buzzer request: {req1_time:.1f}ms")
+            
+            req2_start = time.time()
+            session.get(f'http://{esp_ip}/motor/{action}', timeout=REQUEST_TIMEOUT)
+            req2_time = (time.time() - req2_start) * 1000
+            print(f"  ├─ Motor request: {req2_time:.1f}ms")
         else:
             # Regular on/off control for LEDs
-            response = requests.get(
+            req_start = time.time()
+            response = session.get(
                 f'http://{esp_ip}/{device}/{action}', 
-                timeout=0.3
+                timeout=REQUEST_TIMEOUT
             )
+            req_time = (time.time() - req_start) * 1000
+            print(f"  ├─ {device} request: {req_time:.1f}ms (status: {response.status_code})")
         
         device_status[device] = "ON" if action == "on" else "OFF"
+        
+        total_time = (time.time() - start_time) * 1000
+        print(f"  └─ Total time: {total_time:.1f}ms\n")
             
         return True
             
     except requests.exceptions.Timeout:
-        print(f"Timeout controlling {device} - ESP8266 may be offline")
+        elapsed = (time.time() - start_time) * 1000
+        print(f"  └─ ⚠ TIMEOUT after {elapsed:.1f}ms controlling {device}\n")
         return False
     except requests.exceptions.ConnectionError:
-        print(f"Connection error to ESP8266 at {esp_ip} - device may be offline")
+        elapsed = (time.time() - start_time) * 1000
+        print(f"  └─ ⚠ CONNECTION ERROR after {elapsed:.1f}ms to {esp_ip}\n")
         return False
     except Exception as e:
-        print(f"Error controlling {device}: {e}")
+        elapsed = (time.time() - start_time) * 1000
+        print(f"  └─ ⚠ ERROR after {elapsed:.1f}ms: {e}\n")
         return False
 
 def control_devices_by_gesture(total_fingers):
@@ -62,6 +127,10 @@ def control_devices_by_gesture(total_fingers):
     if not settings.get("detect_all_leds", True):
         return
     
+    # Keep connection alive
+    keepalive_ping()
+    
+    gesture_start = time.time()
     current_time = time.time()
     
     # Use unique keys for each gesture type
@@ -98,18 +167,11 @@ def control_devices_by_gesture(total_fingers):
                         print("[GESTURE] Closed Fist - All Components OFF")
                         try:
                             esp_ip = get_esp8266_ip()
-                            if settings.get("detect_led1", True):
-                                requests.get(f'http://{esp_ip}/led1/off', timeout=1.0)
-                                time.sleep(request_delay)
-                                device_status["led1"] = "OFF"
-                            if settings.get("detect_led2", True):
-                                requests.get(f'http://{esp_ip}/led2/off', timeout=1.0)
-                                time.sleep(request_delay)
-                                device_status["led2"] = "OFF"
-                            if settings.get("detect_motor", True):
-                                requests.get(f'http://{esp_ip}/motor/off', timeout=1.0)
-                                time.sleep(request_delay)
-                                device_status["motor"] = "OFF"
+                            # Single batch request to turn off all devices
+                            session.get(f'http://{esp_ip}/batch?led1=off&led2=off&motor=off&buzzer=off', timeout=REQUEST_TIMEOUT)
+                            device_status["led1"] = "OFF"
+                            device_status["led2"] = "OFF"
+                            device_status["motor"] = "OFF"
                         except Exception as e:
                             print(f"[ERROR] Turn all off failed: {e}")
                             pass
@@ -119,15 +181,10 @@ def control_devices_by_gesture(total_fingers):
                         print("[GESTURE] Open Hand - Red & Green LEDs ON")
                         try:
                             esp_ip = get_esp8266_ip()
-                            if settings.get("detect_led1", True):
-                                requests.get(f'http://{esp_ip}/led1/on', timeout=1.0)
-                                time.sleep(request_delay)
-                                device_status["led1"] = "ON"
-                            if settings.get("detect_led2", True):
-                                requests.get(f'http://{esp_ip}/led2/on', timeout=1.0)
-                                time.sleep(request_delay)
-                                device_status["led2"] = "ON"
-                            # Make sure motor is OFF
+                            # Single batch request to turn on both LEDs
+                            session.get(f'http://{esp_ip}/batch?led1=on&led2=on', timeout=REQUEST_TIMEOUT)
+                            device_status["led1"] = "ON"
+                            device_status["led2"] = "ON"
                             device_status["motor"] = "OFF"
                         except Exception as e:
                             print(f"[ERROR] Turn LEDs on failed: {e}")
@@ -141,8 +198,7 @@ def control_devices_by_gesture(total_fingers):
                             print(f"[GESTURE] 1 Finger - Toggle Red LED: {new_state}")
                             try:
                                 esp_ip = get_esp8266_ip()
-                                requests.get(f'http://{esp_ip}/led1/{action}', timeout=1.0)
-                                time.sleep(request_delay)
+                                session.get(f'http://{esp_ip}/led1/{action}', timeout=REQUEST_TIMEOUT)
                                 device_status["led1"] = new_state
                             except Exception as e:
                                 print(f"[ERROR] LED1 request failed: {e}")
@@ -156,8 +212,7 @@ def control_devices_by_gesture(total_fingers):
                             print(f"[GESTURE] 2 Fingers - Toggle Green LED: {new_state}")
                             try:
                                 esp_ip = get_esp8266_ip()
-                                requests.get(f'http://{esp_ip}/led2/{action}', timeout=1.0)
-                                time.sleep(request_delay)
+                                session.get(f'http://{esp_ip}/led2/{action}', timeout=REQUEST_TIMEOUT)
                                 device_status["led2"] = new_state
                             except Exception as e:
                                 print(f"[ERROR] LED2 request failed: {e}")
@@ -169,21 +224,11 @@ def control_devices_by_gesture(total_fingers):
                             print("[GESTURE] 3 Fingers - Motor & Buzzer ON, LEDs OFF")
                             try:
                                 esp_ip = get_esp8266_ip()
-                                # Turn ON both buzzer and motor together
-                                requests.get(f'http://{esp_ip}/buzzer/on', timeout=1.0)
-                                time.sleep(request_delay)
-                                requests.get(f'http://{esp_ip}/motor/on', timeout=1.0)
-                                time.sleep(request_delay)
+                                # Single batch request: motor+buzzer ON, both LEDs OFF
+                                session.get(f'http://{esp_ip}/batch?motor=on&buzzer=on&led1=off&led2=off', timeout=REQUEST_TIMEOUT)
                                 device_status["motor"] = "ON"
-                                # Turn OFF both LEDs
-                                if settings.get("detect_led1", True):
-                                    requests.get(f'http://{esp_ip}/led1/off', timeout=1.0)
-                                    time.sleep(request_delay)
-                                    device_status["led1"] = "OFF"
-                                if settings.get("detect_led2", True):
-                                    requests.get(f'http://{esp_ip}/led2/off', timeout=1.0)
-                                    time.sleep(request_delay)
-                                    device_status["led2"] = "OFF"
+                                device_status["led1"] = "OFF"
+                                device_status["led2"] = "OFF"
                             except Exception as e:
                                 print(f"[ERROR] 3-finger gesture failed: {e}")
                                 pass
@@ -194,10 +239,8 @@ def control_devices_by_gesture(total_fingers):
                             print("[GESTURE] Motor & Buzzer OFF (gesture changed)")
                             try:
                                 esp_ip = get_esp8266_ip()
-                                requests.get(f'http://{esp_ip}/buzzer/off', timeout=1.0)
-                                time.sleep(request_delay)
-                                requests.get(f'http://{esp_ip}/motor/off', timeout=1.0)
-                                time.sleep(request_delay)
+                                # Single batch request to turn off motor and buzzer
+                                session.get(f'http://{esp_ip}/batch?motor=off&buzzer=off', timeout=REQUEST_TIMEOUT)
                                 device_status["motor"] = "OFF"
                             except Exception as e:
                                 print(f"[ERROR] Motor & Buzzer off request failed: {e}")
@@ -207,6 +250,9 @@ def control_devices_by_gesture(total_fingers):
                     last_total_fingers = total_fingers
                     for key in state_buffer:
                         state_buffer[key].clear()
+                    
+                    gesture_time = (time.time() - gesture_start) * 1000
+                    print(f"[TIMING] Gesture {total_fingers} execution: {gesture_time:.1f}ms")
 
 def test_esp8266_connection(ip=None):
     test_ip = ip or get_esp8266_ip()

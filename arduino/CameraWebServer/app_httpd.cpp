@@ -1122,6 +1122,80 @@ static esp_err_t win_handler(httpd_req_t *req) {
   return httpd_resp_send(req, NULL, 0);
 }
 
+// WiFi Management Handlers
+extern String ssid;
+extern String password;
+extern void saveWiFiCredentials(String newSSID, String newPassword);
+
+static esp_err_t wifi_info_handler(httpd_req_t *req) {
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  
+  char json_response[256];
+  snprintf(json_response, sizeof(json_response),
+    "{\"ssid\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,\"mac\":\"%s\",\"stream_url\":\"http://%s/stream\"}",
+    WiFi.SSID().c_str(),
+    WiFi.localIP().toString().c_str(),
+    WiFi.RSSI(),
+    WiFi.macAddress().c_str(),
+    WiFi.localIP().toString().c_str()
+  );
+  
+  return httpd_resp_send(req, json_response, strlen(json_response));
+}
+
+static esp_err_t wifi_scan_handler(httpd_req_t *req) {
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  
+  int n = WiFi.scanNetworks();
+  String json = "[";
+  
+  for (int i = 0; i < n; i++) {
+    if (i > 0) json += ",";
+    json += "{";
+    json += "\"ssid\":\"" + WiFi.SSID(i) + "\",";
+    json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
+    json += "\"secure\":" + String(WiFi.encryptionType(i) != WIFI_AUTH_OPEN ? "true" : "false");
+    json += "}";
+  }
+  
+  json += "]";
+  
+  return httpd_resp_send(req, json.c_str(), json.length());
+}
+
+static esp_err_t wifi_configure_handler(httpd_req_t *req) {
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+  
+  char buf[200];
+  int ret = httpd_req_recv(req, buf, sizeof(buf));
+  if (ret <= 0) {
+    return ESP_FAIL;
+  }
+  buf[ret] = 0;
+  
+  char newSSID[32] = {0};
+  char newPassword[64] = {0};
+  
+  if (httpd_query_key_value(buf, "ssid", newSSID, sizeof(newSSID)) != ESP_OK ||
+      httpd_query_key_value(buf, "password", newPassword, sizeof(newPassword)) != ESP_OK) {
+    const char* resp = "{\"success\":false,\"message\":\"Missing ssid or password\"}";
+    return httpd_resp_send(req, resp, strlen(resp));
+  }
+  
+  saveWiFiCredentials(String(newSSID), String(newPassword));
+  
+  const char* resp = "{\"success\":true,\"message\":\"WiFi credentials saved. Restarting...\"}";
+  httpd_resp_send(req, resp, strlen(resp));
+  
+  delay(1000);
+  ESP.restart();
+  
+  return ESP_OK;
+}
+
 static esp_err_t index_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "text/html");
   httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
@@ -1287,6 +1361,45 @@ void startCameraServer() {
 #endif
   };
 
+  httpd_uri_t wifi_info_uri = {
+    .uri = "/wifi/info",
+    .method = HTTP_GET,
+    .handler = wifi_info_handler,
+    .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = false,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
+  };
+
+  httpd_uri_t wifi_scan_uri = {
+    .uri = "/wifi/scan",
+    .method = HTTP_GET,
+    .handler = wifi_scan_handler,
+    .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = false,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
+  };
+
+  httpd_uri_t wifi_configure_uri = {
+    .uri = "/wifi/configure",
+    .method = HTTP_POST,
+    .handler = wifi_configure_handler,
+    .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = false,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
+  };
+
   ra_filter_init(&ra_filter, 20);
 
 #if CONFIG_ESP_FACE_RECOGNITION_ENABLED
@@ -1308,6 +1421,11 @@ void startCameraServer() {
     httpd_register_uri_handler(camera_httpd, &greg_uri);
     httpd_register_uri_handler(camera_httpd, &pll_uri);
     httpd_register_uri_handler(camera_httpd, &win_uri);
+    
+    // Register WiFi management endpoints
+    httpd_register_uri_handler(camera_httpd, &wifi_info_uri);
+    httpd_register_uri_handler(camera_httpd, &wifi_scan_uri);
+    httpd_register_uri_handler(camera_httpd, &wifi_configure_uri);
   }
 
   config.server_port += 1;

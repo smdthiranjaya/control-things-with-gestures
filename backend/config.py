@@ -13,8 +13,9 @@ camera_detection_in_progress = False
 camera_detection_completed = False
 
 # Network configuration - Can be updated via web interface
-ESP8266_IP = "192.168.1.15"
-ESP32_CAM_URL = "http://192.168.1.25:81/stream"
+# Using mDNS hostnames - no need to change IPs on different networks!
+ESP8266_IP = "esp8266.local"
+ESP32_CAM_URL = "http://esp32cam.local:81/stream"
 
 # Initialize with ESP32-CAM URL from constant
 camera_sources = {"ESP32-CAM": ESP32_CAM_URL}
@@ -55,5 +56,5 @@ settings = {
 cap = None
 
 def get_esp8266_ip():
-    """Get ESP8266 IP from settings"""
-    return settings.get("esp8266_ip", "192.168.1.15")
+    """Get ESP8266 hostname from settings (mDNS)"""
+    return settings.get("esp8266_ip", "esp8266.local")
