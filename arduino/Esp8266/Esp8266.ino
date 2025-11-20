@@ -13,6 +13,10 @@ const int led2Pin = D2;      // Green LED (GPIO4) - Direct with 220Ω resistor
 const int buzzerPin = D5;    // Buzzer (GPIO14) - Through transistor with 1KΩ base resistor
 const int motorPin = D6;     // Motor (GPIO12) - Through transistor with 1KΩ base resistor
 
+// Motor PWM Configuration (to reduce power consumption and prevent brown-out)
+const int MOTOR_PWM_POWER = 512;  // 50% power (0-1023 range)
+const int BUZZER_PWM_POWER = 767; // 75% power (25% more than motor)
+
 // State Tracking
 bool led1State = false;
 bool led2State = false;
@@ -114,15 +118,15 @@ void setup() {
   server.on("/buzzer/on", HTTP_GET, [](){
     unsigned long start = millis();
     requestCount++;
-    digitalWrite(buzzerPin, HIGH);
-    server.send(200, "text/plain", "Buzzer ON");
-    Serial.printf("[DEBUG] /buzzer/on - %lums\n", millis() - start);
+    analogWrite(buzzerPin, BUZZER_PWM_POWER);  // PWM at 75% power
+    server.send(200, "text/plain", "Buzzer ON (75%)");
+    Serial.printf("[DEBUG] /buzzer/on (PWM=%d) - %lums\n", BUZZER_PWM_POWER, millis() - start);
   });
   
   server.on("/buzzer/off", HTTP_GET, [](){
     unsigned long start = millis();
     requestCount++;
-    digitalWrite(buzzerPin, LOW);
+    analogWrite(buzzerPin, 0);  // PWM at 0% = OFF
     server.send(200, "text/plain", "Buzzer OFF");
     Serial.printf("[DEBUG] /buzzer/off - %lums\n", millis() - start);
   });
@@ -130,15 +134,15 @@ void setup() {
   server.on("/motor/on", HTTP_GET, [](){
     unsigned long start = millis();
     requestCount++;
-    digitalWrite(motorPin, HIGH);  // Turn on transistor
-    server.send(200, "text/plain", "Motor ON");
-    Serial.printf("[DEBUG] /motor/on - %lums\n", millis() - start);
+    analogWrite(motorPin, MOTOR_PWM_POWER);  // PWM at 50% power to prevent brown-out
+    server.send(200, "text/plain", "Motor ON (50%)");
+    Serial.printf("[DEBUG] /motor/on (PWM=%d) - %lums\n", MOTOR_PWM_POWER, millis() - start);
   });
   
   server.on("/motor/off", HTTP_GET, [](){
     unsigned long start = millis();
     requestCount++;
-    digitalWrite(motorPin, LOW);  // Turn off transistor
+    analogWrite(motorPin, 0);  // PWM at 0% = OFF
     server.send(200, "text/plain", "Motor OFF");
     Serial.printf("[DEBUG] /motor/off - %lums\n", millis() - start);
   });
@@ -182,10 +186,10 @@ void setup() {
     if (server.hasArg("buzzer")) {
       String value = server.arg("buzzer");
       if (value == "on") {
-        digitalWrite(buzzerPin, HIGH);
-        response += "BUZZER=ON ";
+        analogWrite(buzzerPin, BUZZER_PWM_POWER);  // PWM at 75%
+        response += "BUZZER=ON(75%) ";
       } else if (value == "off") {
-        digitalWrite(buzzerPin, LOW);
+        analogWrite(buzzerPin, 0);  // PWM at 0%
         response += "BUZZER=OFF ";
       }
       commandCount++;
@@ -195,10 +199,10 @@ void setup() {
     if (server.hasArg("motor")) {
       String value = server.arg("motor");
       if (value == "on") {
-        digitalWrite(motorPin, HIGH);
-        response += "MOTOR=ON ";
+        analogWrite(motorPin, MOTOR_PWM_POWER);  // PWM at 50%
+        response += "MOTOR=ON(50%) ";
       } else if (value == "off") {
-        digitalWrite(motorPin, LOW);
+        analogWrite(motorPin, 0);  // PWM at 0%
         response += "MOTOR=OFF ";
       }
       commandCount++;

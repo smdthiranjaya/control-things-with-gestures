@@ -1,32 +1,61 @@
-import requests
 import time
-from requests.adapters import HTTPAdapter
+import urllib3
+import socket
+from urllib.parse import urlencode
 from backend.config import device_status, get_esp8266_ip, settings
 
-# Create persistent HTTP session with keep-alive and aggressive retry
-session = requests.Session()
-session.headers.update({'Connection': 'keep-alive'})
+# Use urllib3 connection pool directly for maximum control
+# This keeps connections alive aggressively and reuses them
+http_pool = None
+_resolved_esp_ip = None
 
-# Configure adapter for faster connection handling
-adapter = HTTPAdapter(
-    pool_connections=1,
-    pool_maxsize=1,
-    max_retries=0,  # No retries - fail fast
-    pool_block=False
-)
-session.mount('http://', adapter)
+def resolve_hostname(hostname):
+    """Resolve mDNS hostname to IP address once and cache it"""
+    global _resolved_esp_ip
+    if _resolved_esp_ip is None:
+        try:
+            # Resolve hostname to IP address
+            print(f"[DNS] Resolving {hostname}...")
+            resolved = socket.gethostbyname(hostname)
+            _resolved_esp_ip = resolved
+            print(f"[DNS] Resolved {hostname} → {resolved}")
+        except socket.gaierror as e:
+            print(f"[DNS ERROR] Failed to resolve {hostname}: {e}")
+            # Fall back to using hostname directly
+            _resolved_esp_ip = hostname
+    return _resolved_esp_ip
 
-# Timeout tuple: (connect_timeout, read_timeout) in seconds
-# Use longer timeout for initial connection, but session reuse keeps it fast
-REQUEST_TIMEOUT = (3.0, 0.1)  # 3s to connect (first time), 100ms to read
+def get_http_pool():
+    """Get or create HTTP connection pool"""
+    global http_pool
+    if http_pool is None:
+        hostname = get_esp8266_ip()
+        # Resolve hostname to IP to avoid repeated DNS lookups
+        esp_ip = resolve_hostname(hostname)
+        
+        http_pool = urllib3.HTTPConnectionPool(
+            host=esp_ip,
+            port=80,
+            maxsize=1,
+            block=False,
+            timeout=urllib3.Timeout(connect=3.0, read=0.1),
+            retries=False,
+            # Aggressive keep-alive
+            headers={'Connection': 'keep-alive'}
+        )
+        print(f"[CONNECTION] Created connection pool to {esp_ip}")
+    return http_pool
+
+# Timeout for requests
+REQUEST_TIMEOUT = urllib3.Timeout(connect=3.0, read=0.1)
 
 # Connection warming - establish connection on module load
 def warm_connection():
     """Pre-establish TCP connection to ESP8266"""
     try:
-        esp_ip = get_esp8266_ip()
-        session.get(f'http://{esp_ip}/status', timeout=(2.0, 2.0))  # Allow time for initial connection
-        print(f"[CONNECTION] Warmed up connection to {esp_ip}")
+        pool = get_http_pool()
+        pool.request('GET', '/status', timeout=urllib3.Timeout(connect=2.0, read=2.0))
+        print(f"[CONNECTION] Warmed up connection to {pool.host}")
     except Exception as e:
         print(f"[WARNING] Could not warm connection: {e}")
 
@@ -50,8 +79,8 @@ def keepalive_ping():
     current = time.time()
     if current - last_keepalive > keepalive_interval:
         try:
-            esp_ip = get_esp8266_ip()
-            session.get(f'http://{esp_ip}/status', timeout=REQUEST_TIMEOUT)
+            pool = get_http_pool()
+            pool.request('GET', '/status', timeout=REQUEST_TIMEOUT)
             last_keepalive = current
         except:
             pass  # Ignore errors in background ping
@@ -75,30 +104,27 @@ def control_device_direct(device, action):
         print(f"Unknown device: {device}")
         return False
     
-    esp_ip = get_esp8266_ip()
+    pool = get_http_pool()
     print(f"\n[DEBUG {time.strftime('%H:%M:%S.%f')[:-3]}] Control Request: {device} -> {action}")
         
     try:
         # If controlling motor, control both motor and buzzer together
         if device == "motor":
             req1_start = time.time()
-            session.get(f'http://{esp_ip}/buzzer/{action}', timeout=REQUEST_TIMEOUT)
+            pool.request('GET', f'/buzzer/{action}', timeout=REQUEST_TIMEOUT)
             req1_time = (time.time() - req1_start) * 1000
             print(f"  ├─ Buzzer request: {req1_time:.1f}ms")
             
             req2_start = time.time()
-            session.get(f'http://{esp_ip}/motor/{action}', timeout=REQUEST_TIMEOUT)
+            pool.request('GET', f'/motor/{action}', timeout=REQUEST_TIMEOUT)
             req2_time = (time.time() - req2_start) * 1000
             print(f"  ├─ Motor request: {req2_time:.1f}ms")
         else:
             # Regular on/off control for LEDs
             req_start = time.time()
-            response = session.get(
-                f'http://{esp_ip}/{device}/{action}', 
-                timeout=REQUEST_TIMEOUT
-            )
+            response = pool.request('GET', f'/{device}/{action}', timeout=REQUEST_TIMEOUT)
             req_time = (time.time() - req_start) * 1000
-            print(f"  ├─ {device} request: {req_time:.1f}ms (status: {response.status_code})")
+            print(f"  ├─ {device} request: {req_time:.1f}ms (status: {response.status})")
         
         device_status[device] = "ON" if action == "on" else "OFF"
         
@@ -107,13 +133,13 @@ def control_device_direct(device, action):
             
         return True
             
-    except requests.exceptions.Timeout:
+    except urllib3.exceptions.TimeoutError:
         elapsed = (time.time() - start_time) * 1000
         print(f"  └─ ⚠ TIMEOUT after {elapsed:.1f}ms controlling {device}\n")
         return False
-    except requests.exceptions.ConnectionError:
+    except urllib3.exceptions.HTTPError as e:
         elapsed = (time.time() - start_time) * 1000
-        print(f"  └─ ⚠ CONNECTION ERROR after {elapsed:.1f}ms to {esp_ip}\n")
+        print(f"  └─ ⚠ HTTP ERROR after {elapsed:.1f}ms: {e}\n")
         return False
     except Exception as e:
         elapsed = (time.time() - start_time) * 1000
@@ -166,9 +192,9 @@ def control_devices_by_gesture(total_fingers):
                         # Closed fist - Turn OFF all components (Red LED, Green LED, Motor)
                         print("[GESTURE] Closed Fist - All Components OFF")
                         try:
-                            esp_ip = get_esp8266_ip()
+                            pool = get_http_pool()
                             # Single batch request to turn off all devices
-                            session.get(f'http://{esp_ip}/batch?led1=off&led2=off&motor=off&buzzer=off', timeout=REQUEST_TIMEOUT)
+                            pool.request('GET', '/batch?led1=off&led2=off&motor=off&buzzer=off', timeout=REQUEST_TIMEOUT)
                             device_status["led1"] = "OFF"
                             device_status["led2"] = "OFF"
                             device_status["motor"] = "OFF"
@@ -180,9 +206,9 @@ def control_devices_by_gesture(total_fingers):
                         # Open hand - Turn ON Red and Green LEDs only (motor stays OFF)
                         print("[GESTURE] Open Hand - Red & Green LEDs ON")
                         try:
-                            esp_ip = get_esp8266_ip()
+                            pool = get_http_pool()
                             # Single batch request to turn on both LEDs
-                            session.get(f'http://{esp_ip}/batch?led1=on&led2=on', timeout=REQUEST_TIMEOUT)
+                            pool.request('GET', '/batch?led1=on&led2=on', timeout=REQUEST_TIMEOUT)
                             device_status["led1"] = "ON"
                             device_status["led2"] = "ON"
                             device_status["motor"] = "OFF"
@@ -197,8 +223,8 @@ def control_devices_by_gesture(total_fingers):
                             action = "on" if new_state == "ON" else "off"
                             print(f"[GESTURE] 1 Finger - Toggle Red LED: {new_state}")
                             try:
-                                esp_ip = get_esp8266_ip()
-                                session.get(f'http://{esp_ip}/led1/{action}', timeout=REQUEST_TIMEOUT)
+                                pool = get_http_pool()
+                                pool.request('GET', f'/led1/{action}', timeout=REQUEST_TIMEOUT)
                                 device_status["led1"] = new_state
                             except Exception as e:
                                 print(f"[ERROR] LED1 request failed: {e}")
@@ -211,8 +237,8 @@ def control_devices_by_gesture(total_fingers):
                             action = "on" if new_state == "ON" else "off"
                             print(f"[GESTURE] 2 Fingers - Toggle Green LED: {new_state}")
                             try:
-                                esp_ip = get_esp8266_ip()
-                                session.get(f'http://{esp_ip}/led2/{action}', timeout=REQUEST_TIMEOUT)
+                                pool = get_http_pool()
+                                pool.request('GET', f'/led2/{action}', timeout=REQUEST_TIMEOUT)
                                 device_status["led2"] = new_state
                             except Exception as e:
                                 print(f"[ERROR] LED2 request failed: {e}")
@@ -223,9 +249,9 @@ def control_devices_by_gesture(total_fingers):
                         if settings.get("detect_motor", True):
                             print("[GESTURE] 3 Fingers - Motor & Buzzer ON, LEDs OFF")
                             try:
-                                esp_ip = get_esp8266_ip()
+                                pool = get_http_pool()
                                 # Single batch request: motor+buzzer ON, both LEDs OFF
-                                session.get(f'http://{esp_ip}/batch?motor=on&buzzer=on&led1=off&led2=off', timeout=REQUEST_TIMEOUT)
+                                pool.request('GET', '/batch?motor=on&buzzer=on&led1=off&led2=off', timeout=REQUEST_TIMEOUT)
                                 device_status["motor"] = "ON"
                                 device_status["led1"] = "OFF"
                                 device_status["led2"] = "OFF"
@@ -238,9 +264,9 @@ def control_devices_by_gesture(total_fingers):
                         if settings.get("detect_motor", True) and device_status.get("motor") == "ON":
                             print("[GESTURE] Motor & Buzzer OFF (gesture changed)")
                             try:
-                                esp_ip = get_esp8266_ip()
+                                pool = get_http_pool()
                                 # Single batch request to turn off motor and buzzer
-                                session.get(f'http://{esp_ip}/batch?motor=off&buzzer=off', timeout=REQUEST_TIMEOUT)
+                                pool.request('GET', '/batch?motor=off&buzzer=off', timeout=REQUEST_TIMEOUT)
                                 device_status["motor"] = "OFF"
                             except Exception as e:
                                 print(f"[ERROR] Motor & Buzzer off request failed: {e}")
@@ -255,13 +281,13 @@ def control_devices_by_gesture(total_fingers):
                     print(f"[TIMING] Gesture {total_fingers} execution: {gesture_time:.1f}ms")
 
 def test_esp8266_connection(ip=None):
-    test_ip = ip or get_esp8266_ip()
     try:
-        response = requests.get(f'http://{test_ip}/status', timeout=2)
+        pool = get_http_pool()
+        response = pool.request('GET', '/status', timeout=urllib3.Timeout(connect=2.0, read=2.0))
         return True, "Connected successfully"
-    except requests.exceptions.Timeout:
+    except urllib3.exceptions.TimeoutError:
         return False, "Connection timeout"
-    except requests.exceptions.ConnectionError:
+    except urllib3.exceptions.HTTPError:
         return False, "Connection failed"
     except Exception as e:
         return False, str(e)
