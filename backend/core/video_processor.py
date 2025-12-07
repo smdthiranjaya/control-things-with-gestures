@@ -143,7 +143,6 @@ def generate_frames():
                 
                 # Light enhancement for ESP32-CAM (minimal processing)
                 if current_source == "ESP32-CAM":
-                    # Only basic brightness/contrast adjustment
                     frame = cv2.convertScaleAbs(frame, alpha=1.05, beta=5)
                 
                 # Get performance settings
@@ -180,7 +179,6 @@ def generate_frames():
                         for landmark in last_hand_data['landmarks']:
                             cv2.circle(frame, landmark, 5, (0, 255, 0), -1)
                 else:
-                    # Use last detected hand data for gesture control
                     hand_data = last_hand_data
                 
                 if hand_data:

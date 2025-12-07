@@ -4,7 +4,6 @@ import socket
 from urllib.parse import urlencode
 from backend.config import device_status, get_esp8266_ip, settings
 
-# Use urllib3 connection pool directly for maximum control
 # This keeps connections alive aggressively and reuses them
 http_pool = None
 _resolved_esp_ip = None
@@ -14,14 +13,12 @@ def resolve_hostname(hostname):
     global _resolved_esp_ip
     if _resolved_esp_ip is None:
         try:
-            # Resolve hostname to IP address
             print(f"[DNS] Resolving {hostname}...")
             resolved = socket.gethostbyname(hostname)
             _resolved_esp_ip = resolved
             print(f"[DNS] Resolved {hostname} → {resolved}")
         except socket.gaierror as e:
             print(f"[DNS ERROR] Failed to resolve {hostname}: {e}")
-            # Fall back to using hostname directly
             _resolved_esp_ip = hostname
     return _resolved_esp_ip
 
@@ -30,7 +27,6 @@ def get_http_pool():
     global http_pool
     if http_pool is None:
         hostname = get_esp8266_ip()
-        # Resolve hostname to IP to avoid repeated DNS lookups
         esp_ip = resolve_hostname(hostname)
         
         http_pool = urllib3.HTTPConnectionPool(
@@ -40,7 +36,6 @@ def get_http_pool():
             block=False,
             timeout=urllib3.Timeout(connect=3.0, read=0.1),
             retries=False,
-            # Aggressive keep-alive
             headers={'Connection': 'keep-alive'}
         )
         print(f"[CONNECTION] Created connection pool to {esp_ip}")
@@ -59,7 +54,6 @@ def warm_connection():
     except Exception as e:
         print(f"[WARNING] Could not warm connection: {e}")
 
-# Warm connection on import
 try:
     warm_connection()
 except:
@@ -71,7 +65,7 @@ debounce_delay = 1.0
 
 # Keep-alive ping
 last_keepalive = time.time()
-keepalive_interval = 5.0  # Ping every 5 seconds to keep connection alive
+keepalive_interval = 5.0  
 
 def keepalive_ping():
     """Send periodic ping to keep TCP connection alive"""
@@ -83,9 +77,8 @@ def keepalive_ping():
             pool.request('GET', '/status', timeout=REQUEST_TIMEOUT)
             last_keepalive = current
         except:
-            pass  # Ignore errors in background ping
+            pass 
 
-# State confirmation
 state_buffer = {
     "all_leds": [],
     "led1": [],
@@ -108,7 +101,6 @@ def control_device_direct(device, action):
     print(f"\n[DEBUG {time.strftime('%H:%M:%S.%f')[:-3]}] Control Request: {device} -> {action}")
         
     try:
-        # If controlling motor, control both motor and buzzer together
         if device == "motor":
             req1_start = time.time()
             pool.request('GET', f'/buzzer/{action}', timeout=REQUEST_TIMEOUT)
@@ -120,7 +112,6 @@ def control_device_direct(device, action):
             req2_time = (time.time() - req2_start) * 1000
             print(f"  ├─ Motor request: {req2_time:.1f}ms")
         else:
-            # Regular on/off control for LEDs
             req_start = time.time()
             response = pool.request('GET', f'/{device}/{action}', timeout=REQUEST_TIMEOUT)
             req_time = (time.time() - req_start) * 1000
@@ -147,19 +138,16 @@ def control_device_direct(device, action):
         return False
 
 def control_devices_by_gesture(total_fingers):
-    # Gesture Mapping: 0=All OFF | 1=Toggle Red | 2=Toggle Green | 3=Motor ON+LEDs OFF | 5=Both LEDs ON
     global last_total_fingers
     
     if not settings.get("detect_all_leds", True):
         return
     
-    # Keep connection alive
     keepalive_ping()
     
     gesture_start = time.time()
     current_time = time.time()
     
-    # Use unique keys for each gesture type
     gesture_keys = {
         0: "fist",
         1: "one_finger",
@@ -175,25 +163,20 @@ def control_devices_by_gesture(total_fingers):
     
     state_buffer[device_key].append(total_fingers)
     
-    # Keep only last N frames for this specific gesture
     if len(state_buffer[device_key]) > confirmation_frames:
         state_buffer[device_key].pop(0)
     
     # Only trigger if we have enough frames and they're all the same
     if len(state_buffer[device_key]) == confirmation_frames:
         if all(f == total_fingers for f in state_buffer[device_key]):
-            # Check debounce and if gesture changed
             if total_fingers != last_total_fingers:
                 last_change = last_state_change.get(device_key, 0)
                 if current_time - last_change >= debounce_delay:
                     
-                    # Execute gesture command
                     if total_fingers == 0:
-                        # Closed fist - Turn OFF all components (Red LED, Green LED, Motor)
                         print("[GESTURE] Closed Fist - All Components OFF")
                         try:
                             pool = get_http_pool()
-                            # Single batch request to turn off all devices
                             pool.request('GET', '/batch?led1=off&led2=off&motor=off&buzzer=off', timeout=REQUEST_TIMEOUT)
                             device_status["led1"] = "OFF"
                             device_status["led2"] = "OFF"
@@ -203,11 +186,9 @@ def control_devices_by_gesture(total_fingers):
                             pass
                     
                     elif total_fingers == 5:
-                        # Open hand - Turn ON Red and Green LEDs only (motor stays OFF)
                         print("[GESTURE] Open Hand - Red & Green LEDs ON")
                         try:
                             pool = get_http_pool()
-                            # Single batch request to turn on both LEDs
                             pool.request('GET', '/batch?led1=on&led2=on', timeout=REQUEST_TIMEOUT)
                             device_status["led1"] = "ON"
                             device_status["led2"] = "ON"
@@ -245,12 +226,10 @@ def control_devices_by_gesture(total_fingers):
                                 pass
                     
                     elif total_fingers == 3:
-                        # 3 fingers - Turn ON motor and buzzer together, turn OFF both LEDs
                         if settings.get("detect_motor", True):
                             print("[GESTURE] 3 Fingers - Motor & Buzzer ON, LEDs OFF")
                             try:
                                 pool = get_http_pool()
-                                # Single batch request: motor+buzzer ON, both LEDs OFF
                                 pool.request('GET', '/batch?motor=on&buzzer=on&led1=off&led2=off', timeout=REQUEST_TIMEOUT)
                                 device_status["motor"] = "ON"
                                 device_status["led1"] = "OFF"
@@ -260,12 +239,10 @@ def control_devices_by_gesture(total_fingers):
                                 pass
                     
                     else:
-                        # Any other finger count - turn motor and buzzer OFF together if they were ON
                         if settings.get("detect_motor", True) and device_status.get("motor") == "ON":
                             print("[GESTURE] Motor & Buzzer OFF (gesture changed)")
                             try:
                                 pool = get_http_pool()
-                                # Single batch request to turn off motor and buzzer
                                 pool.request('GET', '/batch?motor=off&buzzer=off', timeout=REQUEST_TIMEOUT)
                                 device_status["motor"] = "OFF"
                             except Exception as e:

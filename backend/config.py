@@ -13,7 +13,6 @@ camera_detection_in_progress = False
 camera_detection_completed = False
 
 # Network configuration - Can be updated via web interface
-# Using mDNS hostnames - no need to change IPs on different networks!
 ESP8266_IP = "esp8266.local"
 ESP32_CAM_URL = "http://esp32cam.local:81/stream"
 

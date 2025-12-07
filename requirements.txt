@@ -12,6 +12,7 @@ numpy==1.24.3
 
 # HTTP Requests
 urllib3==2.0.7
+requests==2.31.0
 
 # WebSocket Support
 python-socketio==5.9.0

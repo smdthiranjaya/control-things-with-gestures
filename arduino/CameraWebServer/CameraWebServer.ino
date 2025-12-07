@@ -44,12 +44,12 @@
 // ===========================
 // WiFi credentials (loaded from EEPROM or defaults)
 // ===========================
-String ssid = "SLT";
-String password = "PASS";
+String ssid = "PROJECTX";
+String password = "987654321";
 
 // AP mode credentials (if WiFi connection fails)
-const char* ap_ssid = "ESP32CAM-Setup";
-const char* ap_password = "12345678";
+const char* ap_ssid = "PROJECTX";
+const char* ap_password = "987654321";
 
 void startCameraServer();
 void setupLedFlash(int pin);

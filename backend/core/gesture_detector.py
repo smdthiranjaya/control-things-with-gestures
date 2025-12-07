@@ -203,7 +203,6 @@ def draw_bulb_indicator(frame, landmarks, voltage_percent):
     # Voltage level bar
     fill_width = int(bar_width * voltage_percent / 100)
     if fill_width > 0:
-        # Color gradient from dark to bright yellow based on voltage
         color_intensity = int(100 + (155 * voltage_percent / 100))
         cv2.rectangle(frame, (center_x - bar_width//2, y_pos), 
                       (center_x - bar_width//2 + fill_width, y_pos + bar_height), 
